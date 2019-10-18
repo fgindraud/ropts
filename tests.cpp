@@ -2,3 +2,7 @@
 #include "external/doctest.h"
 
 #include "ropts.h"
+
+TEST_CASE("blah") {
+  // Hello
+}
