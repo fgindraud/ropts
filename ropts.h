@@ -1,0 +1,6 @@
+#ifndef ROPTS_INCLUDE_GUARD
+#define ROPTS_INCLUDE_GUARD
+
+// TODO
+
+#endif
