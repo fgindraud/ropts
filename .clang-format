@@ -10,6 +10,7 @@ BinPackParameters: 'false'
 BreakBeforeBraces: Attach
 ColumnLimit: '100'
 ConstructorInitializerAllOnOneLineOrOnePerLine: 'true'
+IndentWidth: 4
 IndentCaseLabels: 'false'
 Language: Cpp
 NamespaceIndentation: Inner
