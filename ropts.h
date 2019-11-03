@@ -1,7 +1,9 @@
 #ifndef ROPTS_INCLUDE_GUARD
 #define ROPTS_INCLUDE_GUARD
 
+#include <array>
 #include <cassert>
+#include <functional>
 #include <new>
 #include <optional>
 #include <string_view>
@@ -91,22 +93,83 @@ class CowStr {
     }
 };
 
+/******************************************************************************
+ *
+ */
+class CommandLineView {
+    // TODO
+};
+
+/******************************************************************************
+ * Base for option types.
+ */
 struct OptionBase {
     CowStr short_name;
     CowStr long_name;
     CowStr help_text;
+    CowStr doc_text;
 
+    OptionBase() = default;
     virtual ~OptionBase() = default;
-    virtual void parse(std::string_view sv) = 0;
+
+    OptionBase(const OptionBase &) = delete;
+    OptionBase(OptionBase &&) = delete;
+    OptionBase & operator=(const OptionBase &) = delete;
+    OptionBase & operator=(OptionBase &&) = delete;
+
+    virtual void parse(CommandLineView & view) = 0;
 
     // FIXME interface for multi args ?
     // Check (required, ...)
-    // Value names
-    // Doc
 };
 
-struct Parser {
+// Arity
+struct Dynamic {
+    using ValueNameType = CowStr;
+    using CallbackInputType = CommandLineView;
+};
+template <std::size_t N> struct Fixed {
+    static_assert(N > 0);
+    using ValueNameType = std::array<CowStr, N>;
+    using CallbackInputType = void; // FIXME span<string_view, N>
+};
+template <> struct Fixed<1> {
+    using ValueNameType = CowStr;
+    using CallbackInputType = std::string_view;
+};
+
+// TODO occurrence check : optional | required | 0+ | 1+
+
+template <typename T, typename ArityTag = Fixed<1>> struct Option final : OptionBase {
+    std::optional<T> value; // default value if the optional is filled
+    typename ArityTag::ValueNameType value_name;
+    std::function<void(std::optional<T> &, typename ArityTag::CallbackInputType)> from_text;
+
+    void parse(CommandLineView & view) override {
+        // TODO
+    }
+};
+
+//
+struct Flag : OptionBase {
+    bool value;
+};
+
+struct OptionGroup {
+    CowStr name;
+    std::vector<OptionBase *> options;
+};
+
+class Parser {
+  public:
+    Parser() = default;
+
+    void add(OptionBase * option) { options_.emplace_back(option); }
+    void add(OptionBase & option) { add(&option); }
+
+  private:
     std::vector<OptionBase *> options_;
+    std::vector<OptionGroup *> groups_;
 
     std::vector<OptionBase *> positionals_;
     // OR subcommands
@@ -115,6 +178,8 @@ struct Parser {
 // Template versions of Optionbase interface will register in a parser.
 // They must outlive the parser itself.
 // The parser will fill them with values from the parsing step
+
+// TODO use intrusive lists
 
 } // namespace ropts
 

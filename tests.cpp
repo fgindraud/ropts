@@ -23,3 +23,14 @@ TEST_CASE("cow_str") {
     CHECK(s.view() == "lvalue std::string");
     CHECK(s.type() == CowStr::Type::Borrowed);
 }
+
+TEST_CASE("temporary") {
+    Option<int> factor;
+    factor.short_name = "f";
+    factor.help_text = "integer factor";
+    factor.value = 42;
+    factor.value_name = "i";
+    factor.from_text = [](std::optional<int> &, std::string_view) {
+        // Do nothing
+    };
+}
