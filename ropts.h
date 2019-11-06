@@ -3,12 +3,17 @@
 
 #include <array>
 #include <cassert>
-#include <functional>
-#include <new>
+#include <cstdint>    // std::uint32_t in CowStr
+#include <functional> // std::function in OptionBase
 #include <optional>
-#include <string_view>
-#include <type_traits>
+#include <string> // std::char_traits in CowStr
 #include <vector>
+
+// TODO compat c++14
+#include <string_view>
+namespace ropts {
+using std::string_view;
+}
 
 namespace ropts {
 
@@ -16,7 +21,7 @@ namespace ropts {
  * Contains a string which is either a reference, or owned.
  * The string content is not mutable in place.
  * The CowStr can be reassigned a new value.
- * The content can be accessed as a std::string_view.
+ * The content can be accessed as a string_view.
  */
 class CowStr {
   public:
@@ -40,7 +45,9 @@ class CowStr {
     }
 
     /// Raw constructor
-    CowStr(char const * start, std::size_t size, Type type) noexcept : state_{start, size, type} {
+    CowStr(char const * start, std::size_t size, Type type) noexcept
+        : state_{start, static_cast<std::uint32_t>(size), type} {
+        assert(size <= UINT32_MAX);
         assert(start != nullptr);
     }
 
@@ -48,26 +55,28 @@ class CowStr {
     template <std::size_t N>
     explicit CowStr(char const (&s)[N]) noexcept : CowStr{&s[0], N - 1, Type::Borrowed} {
         static_assert(N > 0);
-        assert(s[N - 1] == '\0');
+        assert(s[N - 1] == '\0'); // Ensure this is a string like object
     }
     template <std::size_t N> CowStr & operator=(char const (&s)[N]) noexcept {
         return *this = CowStr(s);
     }
 
     /// Anything string_view compatible : own a copy by default, safer
-    explicit CowStr(std::string_view s) : CowStr() {
+    explicit CowStr(string_view s) : CowStr() {
         if(!s.empty()) {
-            state_ = copy_view_content(s);
+            char * buf = reinterpret_cast<char *>(operator new(s.size() * sizeof(char)));
+            std::char_traits<char>::copy(buf, s.data(), s.size());
+            state_ = {buf, static_cast<std::uint32_t>(s.size()), Type::Owned};
         }
     }
-    CowStr & operator=(std::string_view s) noexcept { return *this = CowStr(s); }
+    CowStr & operator=(string_view s) noexcept { return *this = CowStr(s); }
 
     /// Borrow from string_view compatible : must be explicit
-    static CowStr borrowed(std::string_view s) { return {s.data(), s.size(), Type::Borrowed}; }
+    static CowStr borrowed(string_view s) { return {s.data(), s.size(), Type::Borrowed}; }
 
     // Access
-    std::string_view view() const noexcept { return {state_.start, state_.size}; }
-    operator std::string_view() const noexcept { return view(); }
+    string_view view() const noexcept { return {state_.start, state_.size}; }
+    operator string_view() const noexcept { return view(); }
     char const * data() const noexcept { return state_.start; }
     std::size_t size() const noexcept { return state_.size; }
     Type type() const noexcept { return state_.type; }
@@ -75,7 +84,7 @@ class CowStr {
   private:
     struct RawState {
         char const * start;
-        std::size_t size;
+        std::uint32_t size; // 32 bits are sufficient ; struct 30% smaller due to padding
         Type type;
     };
     static constexpr RawState default_state_{"", 0, Type::Borrowed};
@@ -85,11 +94,6 @@ class CowStr {
         if(state_.type == Type::Owned) {
             operator delete(const_cast<char *>(state_.start));
         }
-    }
-    static RawState copy_view_content(std::string_view s) {
-        char * buf = reinterpret_cast<char *>(operator new(s.size() * sizeof(char)));
-        std::char_traits<char>::copy(buf, s.data(), s.size());
-        return {buf, s.size(), Type::Owned};
     }
 };
 
@@ -131,11 +135,11 @@ struct Dynamic {
 template <std::size_t N> struct Fixed {
     static_assert(N > 0);
     using ValueNameType = std::array<CowStr, N>;
-    using CallbackInputType = void; // FIXME span<string_view, N>
+    using CallbackInputType = std::array<string_view, N>;
 };
 template <> struct Fixed<1> {
     using ValueNameType = CowStr;
-    using CallbackInputType = std::string_view;
+    using CallbackInputType = string_view;
 };
 
 // TODO occurrence check : optional | required | 0+ | 1+

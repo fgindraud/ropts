@@ -10,7 +10,7 @@ using namespace ropts;
 TEST_CASE("cow_str") {
     CowStr s;
     CHECK(s.view() == "");
-    CHECK(s.view() == std::string_view());
+    CHECK(s.view() == ropts::string_view());
     CHECK(s.type() == CowStr::Type::Borrowed);
     s = "literal";
     CHECK(s.view() == "literal");
