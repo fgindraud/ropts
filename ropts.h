@@ -5,19 +5,19 @@
 #include <cassert>
 #include <cstdint>    // std::uint32_t in CowStr
 #include <functional> // std::function in OptionBase
-#include <optional>
-#include <string> // std::char_traits in CowStr
+#include <string>     // std::char_traits in CowStr
 #include <vector>
 
 // TODO compat c++14
+#include <optional>
 #include <string_view>
 namespace ropts {
 using std::string_view;
 }
 
 namespace ropts {
-
 /******************************************************************************
+ * CowStr:
  * Contains a string which is either a reference, or owned.
  * The string content is not mutable in place.
  * The CowStr can be reassigned a new value.
@@ -80,6 +80,7 @@ class CowStr {
     char const * data() const noexcept { return state_.start; }
     std::size_t size() const noexcept { return state_.size; }
     Type type() const noexcept { return state_.type; }
+    bool empty() const noexcept { return size() == 0; }
 
   private:
     struct RawState {
@@ -100,14 +101,54 @@ class CowStr {
 /******************************************************************************
  *
  */
-class CommandLineView {
-    // TODO
+class ArgumentIterator {
+  public:
+    ArgumentIterator(int argc, char const * const * argv) : argv_(argv), argc_(argc) {
+        assert(argc_ > 0);
+    }
+
+    // Process name, as returned by argv[0]
+    string_view process_name() const noexcept { return string_view(argv_[0]); }
+
+    bool has_next() const noexcept { return next_argument_ < argc_; }
+
+    string_view consume_next_argument() {
+        auto arg = string_view(argv_[next_argument_]);
+        next_argument_ += 1;
+        return arg;
+    }
+
+    // TODO consume one, returning either a parsed option or the value.
+
+  private:
+    // Reference to command line array
+    char const * const * argv_;
+    int argc_;
+    // Iterating state
+    int next_argument_ = 1;
 };
 
 /******************************************************************************
- * Base for option types.
+ * Option types.
  */
+
+// Occurrence requirement, must fall between [min,max].
+struct Occurrence {
+    std::uint16_t min;
+    std::uint16_t max;
+    std::uint16_t seen = 0;
+
+    constexpr Occurrence(std::uint16_t min_, std::uint16_t max_) noexcept : min(min_), max(max_) {
+        assert(min <= max);
+    }
+};
+constexpr Occurrence exactly_once = Occurrence{1, 1};
+constexpr Occurrence maybe_once = Occurrence{0, 1};
+constexpr Occurrence at_least_once = Occurrence{1, UINT16_MAX};
+constexpr Occurrence any_number = Occurrence{0, UINT16_MAX};
+
 struct OptionBase {
+    Occurrence occurrence = maybe_once;
     CowStr short_name;
     CowStr long_name;
     CowStr help_text;
@@ -121,7 +162,7 @@ struct OptionBase {
     OptionBase & operator=(const OptionBase &) = delete;
     OptionBase & operator=(OptionBase &&) = delete;
 
-    virtual void parse(CommandLineView & view) = 0;
+    virtual void parse(ArgumentIterator & view) = 0;
 
     // FIXME interface for multi args ?
     // Check (required, ...)
@@ -130,7 +171,7 @@ struct OptionBase {
 // Arity
 struct Dynamic {
     using ValueNameType = CowStr;
-    using CallbackInputType = CommandLineView;
+    using CallbackInputType = ArgumentIterator;
 };
 template <std::size_t N> struct Fixed {
     static_assert(N > 0);
@@ -142,14 +183,12 @@ template <> struct Fixed<1> {
     using CallbackInputType = string_view;
 };
 
-// TODO occurrence check : optional | required | 0+ | 1+
-
 template <typename T, typename ArityTag = Fixed<1>> struct Option final : OptionBase {
     std::optional<T> value; // default value if the optional is filled
     typename ArityTag::ValueNameType value_name;
     std::function<void(std::optional<T> &, typename ArityTag::CallbackInputType)> from_text;
 
-    void parse(CommandLineView & view) override {
+    void parse(ArgumentIterator & view) override {
         // TODO
     }
 };
@@ -160,8 +199,15 @@ struct Flag : OptionBase {
 };
 
 struct OptionGroup {
+    enum class Constraint {
+        None, // Just a group for usage.
+        MutuallyExclusive,
+        RequiredAndMutuallyExclusive,
+    };
+
     CowStr name;
     std::vector<OptionBase *> options;
+    Constraint constraint = Constraint::None;
 };
 
 class Parser {
@@ -184,6 +230,7 @@ class Parser {
 // The parser will fill them with values from the parsing step
 
 // TODO use intrusive lists
+// Note: string_view in printf: use ("%*s", ptr, size)
 
 } // namespace ropts
 
