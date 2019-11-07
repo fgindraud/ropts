@@ -25,12 +25,24 @@ TEST_CASE("cow_str") {
 }
 
 TEST_CASE("temporary") {
+    Parser parser;
+
     Option<int> factor;
-    factor.short_name = "f";
-    factor.help_text = "integer factor";
+    factor.short_name = 'f';
+    factor.help_text = "Integer factor";
     factor.value = 42;
-    factor.value_name = "i";
+    factor.value_name = "N";
     factor.from_text = [](std::optional<int> &, std::string_view) {
         // Do nothing
     };
+    parser.add(factor);
+
+    Option<int, Fixed<3>> triple;
+    triple.short_name = 't';
+    triple.long_name = "triple";
+    triple.help_text = "Make a tuple with 3 elements";
+    triple.value_name = {"A", "B", "C"};
+    parser.add(triple);
+
+    parser.print_usage(stderr);
 }
