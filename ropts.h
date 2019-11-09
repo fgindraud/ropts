@@ -258,6 +258,15 @@ class Parser {
  * TODO system to make them non inline for separate compilation.
  */
 
+// Dummy set of write primitives, used to measure len only
+struct None {};
+inline std::size_t write(None, char) {
+    return 1;
+}
+inline std::size_t write(None, std::string_view sv) {
+    return sv.size();
+}
+
 inline std::size_t write(FILE * out, char c) {
     std::fputc(c, out);
     return 1;
@@ -266,52 +275,43 @@ inline std::size_t write(FILE * out, std::string_view sv) {
     return std::fwrite(sv.data(), 1, sv.size(), out);
 }
 
-inline void Parser::print_usage(FILE * out) const {
+template <typename Out> std::size_t print_option_pattern(Out && out, const OptionBase & option) {
     constexpr std::size_t option_left_indent = 2;
+    std::size_t size = 0;
+    while(size < option_left_indent) {
+        size += write(out, ' ');
+    }
+    if(option.has_short_name()) {
+        size += write(out, '-');
+        size += write(out, option.short_name);
+    }
+    if(option.has_short_name() && !option.long_name.empty()) {
+        size += write(out, ',');
+    }
+    if(!option.long_name.empty()) {
+        size += write(out, "--");
+        size += write(out, option.long_name);
+    }
+    for(const CowStr & value_name : option.usage_value_names()) {
+        size += write(out, ' ');
+        size += write(out, value_name);
+    }
+    return size;
+}
+
+inline void Parser::print_usage(FILE * out) const {
     constexpr std::size_t help_text_left_indent = 3;
     // Compute max size of an option text up to help_text for alignement.
-    std::size_t max_help_text_offset = 0;
+    std::size_t help_text_offset = 0;
     for(const OptionBase * option : options_) {
-        std::size_t size = 0;
-        size += option_left_indent;
-        if(option->has_short_name()) {
-            size += 2; // "-c"
-        }
-        if(option->has_short_name() && !option->long_name.empty()) {
-            size += 1; // ","
-        }
-        if(!option->long_name.empty()) {
-            size += 2 + option->long_name.size(); // "--name"
-        }
-        for(const CowStr & value_name : option->usage_value_names()) {
-            size += 1 + value_name.size();
-        }
-        size += help_text_left_indent;
-        max_help_text_offset = std::max(max_help_text_offset, size);
+        std::size_t option_pattern_len = print_option_pattern(None{}, *option);
+        help_text_offset = std::max(help_text_offset, option_pattern_len + help_text_left_indent);
     }
     // Printing
     write(out, "Options:\n");
     for(const OptionBase * option : options_) {
-        std::size_t size = 0;
-        while(size < option_left_indent) {
-            size += write(out, ' ');
-        }
-        if(option->has_short_name()) {
-            size += write(out, '-');
-            size += write(out, option->short_name);
-        }
-        if(option->has_short_name() && !option->long_name.empty()) {
-            size += write(out, ',');
-        }
-        if(!option->long_name.empty()) {
-            size += write(out, "--");
-            size += write(out, option->long_name);
-        }
-        for(const CowStr & value_name : option->usage_value_names()) {
-            size += write(out, ' ');
-            size += write(out, value_name);
-        }
-        while(size < max_help_text_offset) {
+        std::size_t size = print_option_pattern(out, *option);
+        while(size < help_text_offset) {
             size += write(out, ' ');
         }
         write(out, option->help_text);
