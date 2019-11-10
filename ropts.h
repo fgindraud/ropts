@@ -114,26 +114,23 @@ class CowStr {
 };
 
 /******************************************************************************
- *
+ * Cuts a command line into string_view elements.
  */
-class ArgumentIterator {
+class CommandLineParsingState {
   public:
-    ArgumentIterator(int argc, char const * const * argv) : argv_(argv), argc_(argc) {
+    CommandLineParsingState(int argc, char const * const * argv) : argv_(argv), argc_(argc) {
         assert(argc_ > 0);
     }
 
-    // Process name, as returned by argv[0]
-    string_view process_name() const noexcept { return string_view(argv_[0]); }
-
-    bool has_next() const noexcept { return next_argument_ < argc_; }
-
-    string_view consume_next_argument() {
-        auto arg = string_view(argv_[next_argument_]);
-        next_argument_ += 1;
-        return arg;
+    std::optional<string_view> next_argument() {
+        if(next_argument_ < argc_) {
+            auto arg = string_view(argv_[next_argument_]);
+            next_argument_ += 1;
+            return {arg};
+        } else {
+            return {};
+        }
     }
-
-    // TODO consume one, returning either a parsed option or the value.
 
   private:
     // Reference to command line array
@@ -170,8 +167,12 @@ struct OptionBase {
     CowStr doc_text;
 
     OptionBase() = default;
-    virtual ~OptionBase() = default;
+    explicit OptionBase(char short_name_) : short_name(short_name_) {}
+    explicit OptionBase(CowStr long_name_) : long_name(std::move(long_name_)) {}
+    OptionBase(char short_name_, CowStr long_name_)
+        : short_name(short_name_), long_name(std::move(long_name_)) {}
 
+    virtual ~OptionBase() = default;
     OptionBase(const OptionBase &) = delete;
     OptionBase(OptionBase &&) = delete;
     OptionBase & operator=(const OptionBase &) = delete;
@@ -179,7 +180,7 @@ struct OptionBase {
 
     bool has_short_name() const noexcept { return short_name != '\0'; }
 
-    virtual void parse(ArgumentIterator & view) = 0;
+    virtual void parse(CommandLineParsingState & state) = 0;
     virtual Slice<CowStr> usage_value_names() const = 0;
 
     // FIXME interface for multi args ?
@@ -189,7 +190,7 @@ struct OptionBase {
 // Arity
 struct Dynamic {
     using ValueNameType = CowStr;
-    using CallbackInputType = ArgumentIterator;
+    using CallbackInputType = CommandLineParsingState &;
 };
 template <std::size_t N> struct Fixed {
     static_assert(N > 0, "Use Flag instead of O-arity option");
@@ -204,9 +205,11 @@ template <> struct Fixed<1> {
 template <typename T, typename Arity = Fixed<1>> struct Option final : OptionBase {
     std::optional<T> value; // default value if the optional is filled
     typename Arity::ValueNameType value_name;
-    std::function<void(std::optional<T> &, typename Arity::CallbackInputType)> from_text;
+    std::function<void(std::optional<T> &, typename Arity::CallbackInputType)> action;
 
-    void parse(ArgumentIterator & view) override {
+    using OptionBase::OptionBase;
+
+    void parse(CommandLineParsingState & state) override {
         // TODO
     }
     Slice<CowStr> usage_value_names() const override { return Slice<CowStr>{value_name}; }
@@ -214,7 +217,7 @@ template <typename T, typename Arity = Fixed<1>> struct Option final : OptionBas
 
 //
 struct Flag : OptionBase {
-    bool value;
+    bool value = false;
 
     Slice<CowStr> usage_value_names() const override { return Slice<CowStr>{}; }
 };
@@ -231,32 +234,39 @@ struct OptionGroup {
     Constraint constraint = Constraint::None;
 };
 
-class Parser {
+// Template versions of Optionbase interface will register in a parser.
+// They must outlive the parser itself.
+// The parser will fill them with values from the parsing step
+class Application {
   public:
-    Parser() = default;
+    Application(CowStr name) : name_(std::move(name)) {}
 
     void add(OptionBase & option) { options_.emplace_back(&option); }
+    void parse(int argc, char const * const * argv);
 
     void print_usage(FILE * out) const;
 
   private:
+    CowStr name_;
     std::vector<OptionBase *> options_;
     std::vector<OptionGroup *> groups_;
 
-    std::vector<OptionBase *> positionals_;
-    // OR subcommands
+    // TODO positionals = Options without name ?
+    // TODO subcommands
 };
-
-// Template versions of Optionbase interface will register in a parser.
-// They must outlive the parser itself.
-// The parser will fill them with values from the parsing step
 
 // TODO use intrusive lists
 
 /******************************************************************************
- * Impl of complex functions.
+ * Implementations.
  * TODO system to make them non inline for separate compilation.
  */
+
+inline void Application::parse(int argc, char const * const * argv) {
+    CommandLineParsingState command_line{argc, argv};
+    // Loop until no more elements.
+    //
+}
 
 // Dummy set of write primitives, used to measure len only
 struct None {};
@@ -299,7 +309,10 @@ template <typename Out> std::size_t print_option_pattern(Out && out, const Optio
     return size;
 }
 
-inline void Parser::print_usage(FILE * out) const {
+inline void Application::print_usage(FILE * out) const {
+    write(out, name_);
+    write(out, " [options]\n\n");
+
     constexpr std::size_t help_text_left_indent = 3;
     // Compute max size of an option text up to help_text for alignement.
     std::size_t help_text_offset = 0;
