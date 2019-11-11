@@ -6,7 +6,7 @@
 #include <cstdint>    // std::uint32_t in CowStr
 #include <cstdio>     // std::FILE
 #include <functional> // std::function in OptionBase
-#include <string>     // std::char_traits in CowStr
+#include <string>     // write(string&), std::char_traits in CowStr
 #include <vector>
 
 // TODO compat c++14
@@ -298,6 +298,15 @@ inline std::size_t write(None, std::string_view sv) {
     return sv.size();
 }
 
+inline std::size_t write(std::string & out, char c) {
+    out.push_back(c);
+    return 1;
+}
+inline std::size_t write(std::string & out, string_view sv) {
+    out.append(sv.data(), sv.size());
+    return sv.size();
+}
+
 inline std::size_t write(FILE * out, char c) {
     std::fputc(c, out);
     return 1;
@@ -306,11 +315,12 @@ inline std::size_t write(FILE * out, std::string_view sv) {
     return std::fwrite(sv.data(), 1, sv.size(), out);
 }
 
-constexpr char spaces_buffer[] = "                                                              ";
+constexpr char spaces_buffer[] = "                                                                ";
+constexpr std::size_t spaces_buffer_size = std::size(spaces_buffer) - 1;
+
 template <typename Out> std::size_t write_spaces(Out && out, std::size_t n) {
-    const std::size_t buffer_size = std::size(spaces_buffer);
-    while(n >= buffer_size) {
-        n -= write(out, string_view{spaces_buffer, buffer_size});
+    while(n >= spaces_buffer_size) {
+        n -= write(out, string_view{spaces_buffer, spaces_buffer_size});
     }
     write(out, string_view{spaces_buffer, n});
     return n;
