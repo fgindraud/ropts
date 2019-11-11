@@ -118,25 +118,31 @@ class CowStr {
  */
 class CommandLineParsingState {
   public:
-    CommandLineParsingState(int argc, char const * const * argv) : argv_(argv), argc_(argc) {
+    CommandLineParsingState(int argc, char const * const * argv) : argc_(argc), argv_(argv) {
         assert(argc_ > 0);
     }
 
-    std::optional<string_view> next_argument() {
+    bool read_next_argument() {
         if(next_argument_ < argc_) {
-            auto arg = string_view(argv_[next_argument_]);
+            current_argument_ = string_view(argv_[next_argument_]);
             next_argument_ += 1;
-            return {arg};
+            return true;
         } else {
-            return {};
+            return false;
         }
     }
 
+    string_view current_argument() const noexcept { return current_argument_; }
+
+    // Used by parser only
+    void set_current_argument(string_view value) noexcept { current_argument_ = value; }
+
   private:
     // Reference to command line array
-    char const * const * argv_;
     int argc_;
+    char const * const * argv_;
     // Iterating state
+    string_view current_argument_;
     int next_argument_ = 1;
 };
 
@@ -244,7 +250,7 @@ class Application {
     void add(OptionBase & option) { options_.emplace_back(&option); }
     void parse(int argc, char const * const * argv);
 
-    void print_usage(FILE * out) const;
+    void write_usage(FILE * out) const;
 
   private:
     CowStr name_;
@@ -265,7 +271,22 @@ class Application {
 inline void Application::parse(int argc, char const * const * argv) {
     CommandLineParsingState command_line{argc, argv};
     // Loop until no more elements.
-    //
+    while(command_line.read_next_argument()) {
+        string_view argument = command_line.current_argument();
+        if(argument.size() > 0 && argument[0] == '-') {
+            if(argument.size() > 1 && argument[1] == '-') {
+                // Long option name
+                // Maybe '--'.
+            } else {
+                // Short option name
+                // Could be '-' for stdin/stdout FIXME
+            }
+        } else {
+            // Subcommand
+            // Positional
+            // Or error
+        }
+    }
 }
 
 // Dummy set of write primitives, used to measure len only
@@ -285,50 +306,58 @@ inline std::size_t write(FILE * out, std::string_view sv) {
     return std::fwrite(sv.data(), 1, sv.size(), out);
 }
 
-template <typename Out> std::size_t print_option_pattern(Out && out, const OptionBase & option) {
-    constexpr std::size_t option_left_indent = 2;
-    std::size_t size = 0;
-    while(size < option_left_indent) {
-        size += write(out, ' ');
+constexpr char spaces_buffer[] = "                                                              ";
+template <typename Out> std::size_t write_spaces(Out && out, std::size_t n) {
+    const std::size_t buffer_size = std::size(spaces_buffer);
+    while(n >= buffer_size) {
+        n -= write(out, string_view{spaces_buffer, buffer_size});
     }
-    if(option.has_short_name()) {
-        size += write(out, '-');
-        size += write(out, option.short_name);
-    }
-    if(option.has_short_name() && !option.long_name.empty()) {
-        size += write(out, ',');
-    }
-    if(!option.long_name.empty()) {
-        size += write(out, "--");
-        size += write(out, option.long_name);
-    }
-    for(const CowStr & value_name : option.usage_value_names()) {
-        size += write(out, ' ');
-        size += write(out, value_name);
-    }
-    return size;
+    write(out, string_view{spaces_buffer, n});
+    return n;
 }
 
-inline void Application::print_usage(FILE * out) const {
-    write(out, name_);
-    write(out, " [options]\n\n");
-
-    constexpr std::size_t help_text_left_indent = 3;
-    // Compute max size of an option text up to help_text for alignement.
-    std::size_t help_text_offset = 0;
-    for(const OptionBase * option : options_) {
-        std::size_t option_pattern_len = print_option_pattern(None{}, *option);
-        help_text_offset = std::max(help_text_offset, option_pattern_len + help_text_left_indent);
+inline void Application::write_usage(FILE * out) const {
+    // Header
+    {
+        write(out, name_);
+        write(out, " [options]\n\n");
     }
-    // Printing
-    write(out, "Options:\n");
-    for(const OptionBase * option : options_) {
-        std::size_t size = print_option_pattern(out, *option);
-        while(size < help_text_offset) {
-            size += write(out, ' ');
+    // Option printing
+    {
+        auto write_option_pattern = [](auto && out, const OptionBase & option) -> std::size_t {
+            std::size_t size = 0;
+            size += write(out, "  ");
+            if(option.has_short_name()) {
+                size += write(out, '-');
+                size += write(out, option.short_name);
+            }
+            if(option.has_short_name() && !option.long_name.empty()) {
+                size += write(out, ',');
+            }
+            if(!option.long_name.empty()) {
+                size += write(out, "--");
+                size += write(out, option.long_name);
+            }
+            for(const CowStr & value_name : option.usage_value_names()) {
+                size += write(out, ' ');
+                size += write(out, value_name);
+            }
+            return size;
+        };
+        // Compute max size of an option text up to help_text for alignement.
+        std::size_t help_text_offset = 0;
+        for(const OptionBase * option : options_) {
+            std::size_t option_pattern_len = write_option_pattern(None{}, *option);
+            help_text_offset = std::max(help_text_offset, option_pattern_len + 3);
         }
-        write(out, option->help_text);
-        write(out, '\n');
+        // Printing
+        write(out, "Options:\n");
+        for(const OptionBase * option : options_) {
+            std::size_t size = write_option_pattern(out, *option);
+            write_spaces(out, help_text_offset - size);
+            write(out, option->help_text); // TODO line wrapping. Use terminal size ?
+            write(out, '\n');
+        }
     }
 }
 

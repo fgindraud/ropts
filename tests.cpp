@@ -41,5 +41,5 @@ TEST_CASE("temporary") {
     triple.value_name = {"A", "B", "C"};
     app.add(triple);
 
-    app.print_usage(stderr);
+    app.write_usage(stderr);
 }
