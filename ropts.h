@@ -9,12 +9,43 @@
 #include <string>     // write(string&), std::char_traits in CowStr
 #include <vector>
 
-// TODO compat c++14
+#include <type_traits> // MaybeUninit
+
+#if __cplusplus >= 201703L
 #include <optional>
 #include <string_view>
 namespace ropts {
 using std::string_view;
 }
+#elif __cplusplus >= 201402L
+namespace ropts {
+// TODO compat c++14
+
+// Tool to implement an optional<T>
+template <typename T> class MaybeUninit {
+  public:
+    // Created as empty, should be empty when destroyed.
+    MaybeUninit() = default;
+    ~MaybeUninit() = default;
+
+    MaybeUninit(const MaybeUninit &) = delete;
+    MaybeUninit & operator=(const MaybeUninit &) = delete;
+    MaybeUninit(MaybeUninit &&) = delete;
+    MaybeUninit & operator=(MaybeUninit &&) = delete;
+
+    template <typename... Args> void construct(Args &&... args) {
+        new(&storage_) T(std::forward<Args>(args)...);
+    }
+    T & assume_init() { return *reinterpret_cast<T *>(&storage_); }
+    void destroy() { assume_init().~T(); }
+
+  private:
+    std::aligned_storage_t<sizeof(T), alignof(T)> storage_;
+};
+} // namespace ropts
+#else
+#error "Requires at least C++14"
+#endif
 
 namespace ropts {
 // Slice<T> : reference to const T[n]
