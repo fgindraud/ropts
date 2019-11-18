@@ -6,10 +6,9 @@
 #include <cstdint>    // std::uint32_t in CowStr
 #include <cstdio>     // std::FILE
 #include <functional> // std::function in OptionBase
-#include <string>     // write(string&), std::char_traits in CowStr
+#include <iosfwd>     // std::ostream
+#include <string>     // std::char_traits in CowStr
 #include <vector>
-
-#include <type_traits> // MaybeUninit
 
 #if __cplusplus >= 201703L
 #include <optional>
@@ -18,6 +17,7 @@ namespace ropts {
 using std::string_view;
 }
 #elif __cplusplus >= 201402L
+#include <type_traits> // MaybeUninit
 namespace ropts {
 // TODO compat c++14
 
@@ -54,8 +54,8 @@ template <typename T> struct Slice {
     std::size_t size{0};
 
     Slice() = default;
-    template <std::size_t N> explicit Slice(const std::array<T, N> & a) : base(a.data()), size(N) {}
-    explicit Slice(const T & t) : base(&t), size(1) {}
+    template <std::size_t N> explicit Slice(std::array<T, N> const & a) : base(a.data()), size(N) {}
+    explicit Slice(T const & t) : base(&t), size(1) {}
 
     const T & operator[](std::size_t n) const { return base[n]; }
     const T * begin() const { return base; }
@@ -281,7 +281,8 @@ class Application {
     void add(OptionBase & option) { options_.emplace_back(&option); }
     void parse(int argc, char const * const * argv);
 
-    void write_usage(FILE * out) const;
+    void write_usage(std::FILE * out) const;
+    void write_usage(std::ostream & out) const;
 
   private:
     CowStr name_;
@@ -293,114 +294,6 @@ class Application {
 };
 
 // TODO use intrusive lists
-
-/******************************************************************************
- * Implementations.
- * TODO system to make them non inline for separate compilation.
- */
-
-inline void Application::parse(int argc, char const * const * argv) {
-    CommandLineParsingState command_line{argc, argv};
-    // Loop until no more elements.
-    while(command_line.read_next_argument()) {
-        string_view argument = command_line.current_argument();
-        if(argument.size() > 0 && argument[0] == '-') {
-            if(argument.size() > 1 && argument[1] == '-') {
-                // Long option name
-                // Maybe '--'.
-            } else {
-                // Short option name
-                // Could be '-' for stdin/stdout FIXME
-            }
-        } else {
-            // Subcommand
-            // Positional
-            // Or error
-        }
-    }
-}
-
-// Dummy set of write primitives, used to measure len only
-struct None {};
-inline std::size_t write(None, char) {
-    return 1;
-}
-inline std::size_t write(None, std::string_view sv) {
-    return sv.size();
-}
-
-inline std::size_t write(std::string & out, char c) {
-    out.push_back(c);
-    return 1;
-}
-inline std::size_t write(std::string & out, string_view sv) {
-    out.append(sv.data(), sv.size());
-    return sv.size();
-}
-
-inline std::size_t write(FILE * out, char c) {
-    std::fputc(c, out);
-    return 1;
-}
-inline std::size_t write(FILE * out, std::string_view sv) {
-    return std::fwrite(sv.data(), 1, sv.size(), out);
-}
-
-constexpr char spaces_buffer[] = "                                                                ";
-constexpr std::size_t spaces_buffer_size = std::size(spaces_buffer) - 1;
-
-template <typename Out> std::size_t write_spaces(Out && out, std::size_t n) {
-    while(n >= spaces_buffer_size) {
-        n -= write(out, string_view{spaces_buffer, spaces_buffer_size});
-    }
-    write(out, string_view{spaces_buffer, n});
-    return n;
-}
-
-inline void Application::write_usage(FILE * out) const {
-    // Header
-    {
-        write(out, name_);
-        write(out, " [options]\n\n");
-    }
-    // Option printing
-    {
-        auto write_option_pattern = [](auto && out, const OptionBase & option) -> std::size_t {
-            std::size_t size = 0;
-            size += write(out, "  ");
-            if(option.has_short_name()) {
-                size += write(out, '-');
-                size += write(out, option.short_name);
-            }
-            if(option.has_short_name() && !option.long_name.empty()) {
-                size += write(out, ',');
-            }
-            if(!option.long_name.empty()) {
-                size += write(out, "--");
-                size += write(out, option.long_name);
-            }
-            for(const CowStr & value_name : option.usage_value_names()) {
-                size += write(out, ' ');
-                size += write(out, value_name);
-            }
-            return size;
-        };
-        // Compute max size of an option text up to help_text for alignement.
-        std::size_t help_text_offset = 0;
-        for(const OptionBase * option : options_) {
-            std::size_t option_pattern_len = write_option_pattern(None{}, *option);
-            help_text_offset = std::max(help_text_offset, option_pattern_len + 3);
-        }
-        // Printing
-        write(out, "Options:\n");
-        for(const OptionBase * option : options_) {
-            std::size_t size = write_option_pattern(out, *option);
-            write_spaces(out, help_text_offset - size);
-            write(out, option->help_text); // TODO line wrapping. Use terminal size ?
-            write(out, '\n');
-        }
-    }
-}
 
 } // namespace ropts
 

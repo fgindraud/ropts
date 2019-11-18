@@ -3,7 +3,6 @@
 
 #include "ropts.h"
 
-#include <algorithm>
 #include <string>
 
 using namespace ropts;
@@ -23,15 +22,6 @@ TEST_CASE("cow_str") {
     s = CowStr::borrowed(lvalue_string);
     CHECK(s.view() == "lvalue std::string");
     CHECK(s.type() == CowStr::Type::Borrowed);
-}
-
-TEST_CASE("write_spaces") {
-    // Check that write_spaces works ok when multiple buffer writes are used
-    std::string out;
-    write_spaces(out, spaces_buffer_size + 10);
-    CHECK(out.size() == spaces_buffer_size + 10);
-    const bool all_spaces = std::all_of(out.begin(), out.end(), [](char c) { return c == ' '; });
-    CHECK(all_spaces);
 }
 
 TEST_CASE("temporary") {
