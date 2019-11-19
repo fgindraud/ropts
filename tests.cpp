@@ -31,9 +31,6 @@ TEST_CASE("temporary") {
     factor.help_text = "Integer factor";
     factor.value_name = "N";
     factor.value = 42;
-    factor.action = [](std::optional<int> &, std::string_view) {
-        // Do nothing
-    };
     app.add(factor);
 
     Option<int, Fixed<3>> triple{'t', "triple"};

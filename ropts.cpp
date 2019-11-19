@@ -52,25 +52,75 @@ struct DummyFormatBuffer {
  * Implementations.
  */
 
-void Application::parse(int argc, char const * const * argv) {
-    CommandLineParsingState command_line{argc, argv};
-    // Loop until no more elements.
-    while(command_line.read_next_argument()) {
-        string_view argument = command_line.current_argument();
-        if(argument.size() > 0 && argument[0] == '-') {
-            if(argument.size() > 1 && argument[1] == '-') {
-                // Long option name
-                // Maybe '--'.
+template <typename Predicate>
+OptionBase * find(std::vector<OptionBase *> & options, Predicate predicate) {
+    for(OptionBase * option : options) {
+        if(predicate(option)) {
+            return option;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<std::string> Application::parse(CommandLine command_line) {
+
+    bool enable_option_parsing = true; // Set to false if '--' is encountered.
+
+    while(command_line.read_next_element()) {
+        string_view element = command_line.current_element();
+        if(enable_option_parsing && element.size() >= 2 && element[0] == '-' && element[1] == '-') {
+            // Long option
+            string_view option_name = string_view{&element[2], element.size() - 2};
+            if(option_name.empty()) {
+                // '--'
+                enable_option_parsing = false;
             } else {
-                // Short option name
-                // Could be '-' for stdin/stdout FIXME
+                // '--name'
+                // TODO support '--name=blah' mode
+                OptionBase * option = find(options_, [option_name](OptionBase * o) {
+                    return o->long_name == option_name;
+                });
+                if(option != nullptr) {
+                    // TODO option parsing. Value starts in next element
+                } else {
+                    FormatBuffer error;
+                    error.push("unknown option name: '");
+                    error.push(element);
+                    error.push('\'');
+                    return std::move(error.buffer);
+                }
+            }
+        } else if(enable_option_parsing && element.size() >= 2 && element[0] == '-') {
+            // Short option
+            if(element.size() > 2) {
+                FormatBuffer error;
+                error.push("packed short options are not supported: '");
+                error.push(element);
+                error.push('\'');
+                return std::move(error.buffer);
+            }
+            // '-c'
+            char option_name = element[1];
+            OptionBase * option = find(options_, [option_name](OptionBase * o) {
+                return o->short_name == option_name; //
+            });
+            if(option != nullptr) {
+                // TODO option parsing, value in next element
+            } else {
+                FormatBuffer error;
+                error.push("unknown option name: '");
+                error.push(element);
+                error.push('\'');
+                return std::move(error.buffer);
             }
         } else {
+            // TODO
             // Subcommand
             // Positional
             // Or error
         }
     }
+    return {}; // Success
 }
 
 static void write_usage_impl(

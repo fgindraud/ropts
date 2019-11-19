@@ -5,47 +5,25 @@
 #include <cassert>
 #include <cstdint>    // std::uint32_t in CowStr
 #include <cstdio>     // std::FILE
-#include <functional> // std::function in OptionBase
 #include <iosfwd>     // std::ostream
 #include <string>     // std::char_traits in CowStr
 #include <vector>
 
-#if __cplusplus >= 201703L
+// TODO compat C++14 ?
 #include <optional>
 #include <string_view>
 namespace ropts {
 using std::string_view;
 }
-#elif __cplusplus >= 201402L
-#include <type_traits> // MaybeUninit
-namespace ropts {
-// TODO compat c++14
 
-// Tool to implement an optional<T>
-template <typename T> class MaybeUninit {
-  public:
-    // Created as empty, should be empty when destroyed.
-    MaybeUninit() = default;
-    ~MaybeUninit() = default;
 
-    MaybeUninit(const MaybeUninit &) = delete;
-    MaybeUninit & operator=(const MaybeUninit &) = delete;
-    MaybeUninit(MaybeUninit &&) = delete;
-    MaybeUninit & operator=(MaybeUninit &&) = delete;
-
-    template <typename... Args> void construct(Args &&... args) {
-        new(&storage_) T(std::forward<Args>(args)...);
-    }
-    T & assume_init() { return *reinterpret_cast<T *>(&storage_); }
-    void destroy() { assume_init().~T(); }
-
-  private:
-    std::aligned_storage_t<sizeof(T), alignof(T)> storage_;
-};
-} // namespace ropts
-#else
-#error "Requires at least C++14"
-#endif
+/* Command line parser.
+ * 
+ * Avoids allocations whevener possible.
+ * Allocates when:
+ * - non literal strings are used.
+ * - errors are returned.
+ */
 
 namespace ropts {
 // Slice<T> : reference to const T[n]
@@ -147,15 +125,15 @@ class CowStr {
 /******************************************************************************
  * Cuts a command line into string_view elements.
  */
-class CommandLineParsingState {
+class CommandLine {
   public:
-    CommandLineParsingState(int argc, char const * const * argv) : argc_(argc), argv_(argv) {
+    CommandLine(int argc, char const * const * argv) : argc_(argc), argv_(argv) {
         assert(argc_ > 0);
     }
 
-    bool read_next_argument() {
+    bool read_next_element() {
         if(next_argument_ < argc_) {
-            current_argument_ = string_view(argv_[next_argument_]);
+            current_element_ = string_view(argv_[next_argument_]);
             next_argument_ += 1;
             return true;
         } else {
@@ -163,17 +141,17 @@ class CommandLineParsingState {
         }
     }
 
-    string_view current_argument() const noexcept { return current_argument_; }
+    string_view current_element() const noexcept { return current_element_; }
 
     // Used by parser only
-    void set_current_argument(string_view value) noexcept { current_argument_ = value; }
+    void set_current_element(string_view value) noexcept { current_element_ = value; }
 
   private:
     // Reference to command line array
     int argc_;
     char const * const * argv_;
     // Iterating state
-    string_view current_argument_;
+    string_view current_element_;
     int next_argument_ = 1;
 };
 
@@ -217,17 +195,27 @@ struct OptionBase {
 
     bool has_short_name() const noexcept { return short_name != '\0'; }
 
-    virtual void parse(CommandLineParsingState & state) = 0;
+    virtual void parse(CommandLine & state) = 0;
     virtual Slice<CowStr> usage_value_names() const = 0;
 
     // FIXME interface for multi args ?
     // Check (required, ...)
 };
 
+template <typename ValueSpec> struct ValueTraits;
+
+template <> struct ValueTraits<int> {
+    using Type = int;
+    using ValueName = CowStr;
+    static void parse(int & value, CommandLine & state, ValueName const & name) {
+        // Start from global parse function
+    }
+};
+
 // Arity
 struct Dynamic {
     using ValueNameType = CowStr;
-    using CallbackInputType = CommandLineParsingState &;
+    using CallbackInputType = CommandLine &;
 };
 template <std::size_t N> struct Fixed {
     static_assert(N > 0, "Use Flag instead of O-arity option");
@@ -242,11 +230,10 @@ template <> struct Fixed<1> {
 template <typename T, typename Arity = Fixed<1>> struct Option final : OptionBase {
     std::optional<T> value; // default value if the optional is filled
     typename Arity::ValueNameType value_name;
-    std::function<void(std::optional<T> &, typename Arity::CallbackInputType)> action;
 
     using OptionBase::OptionBase;
 
-    void parse(CommandLineParsingState & state) override {
+    void parse(CommandLine & state) override {
         // TODO
     }
     Slice<CowStr> usage_value_names() const override { return Slice<CowStr>{value_name}; }
@@ -279,7 +266,10 @@ class Application {
     Application(CowStr name) : name_(std::move(name)) {}
 
     void add(OptionBase & option) { options_.emplace_back(&option); }
-    void parse(int argc, char const * const * argv);
+
+    // Parse command_line and fills registered options.
+    // Return : empty optional on success, or an error message.
+    std::optional<std::string> parse(CommandLine command_line);
 
     void write_usage(std::FILE * out) const;
     void write_usage(std::ostream & out) const;
