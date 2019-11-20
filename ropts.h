@@ -9,6 +9,7 @@
 #include <iosfwd>    // std::ostream
 #include <string>    // std::char_traits in CowStr
 #include <tuple>
+#include <utility> // move, index_sequence
 #include <vector>
 
 // TODO compat C++14 ?
@@ -137,7 +138,7 @@ class CowStr {
 static_assert(sizeof(CowStr) == sizeof(string_view));
 
 /******************************************************************************
- * Cuts a command line into string_view elements.
+ * Iterates over a command line, returning string_view elements.
  */
 class CommandLine {
   public:
@@ -145,48 +146,77 @@ class CommandLine {
         assert(argc_ > 0);
     }
 
-    bool read_next_element() {
-        if(next_argument_ < argc_) {
-            current_element_ = string_view(argv_[next_argument_]);
-            next_argument_ += 1;
-            return true;
-        } else {
-            return false;
-        }
-    }
+    // Extract the next element
+    std::optional<string_view> next();
 
-    string_view current_element() const noexcept { return current_element_; }
-
-    // Used by parser only
-    void set_current_element(string_view value) noexcept { current_element_ = value; }
+    // Place an element at the front (only one at a time). Used to peek values.
+    void push_front(string_view element);
 
   private:
     // Reference to command line array
     int argc_;
     char const * const * argv_;
     // Iterating state
-    string_view current_element_;
+    std::optional<string_view> current_element_;
     int next_argument_ = 1;
 };
 
 /******************************************************************************
- * Parsable value types.
+ * Parsable / printable value types, specified by ValueTrait.
+ * Trait content:
+ *
+ * NameType : storage type for value name in the option type.
+ *
+ * ValueType : type of value returned by parsing and stored.
+ *
+ * ValueType parse(CommandLine & state, NameType const & name) :
+ *   Performs parsing, exception on error.
+ *   'name' is often taken as a string_view if NameType is a single CowStr (convertible).
+ *
+ * std::size_t write(std::string & buffer, ValueType const & value) :
+ *   Writes a text representation of 'value' to the string buffer.
+ *   Returns the size of the written text.
+ *   Used for printing default values and in error messages.
+ *   For small types the 'value' can be passed by value.
  */
-
 template <typename Specification> struct ValueTrait;
+
+/// Returns slices of the input command_line, with process lifetime (safe)
+template <> struct ValueTrait<string_view> {
+    using NameType = CowStr;
+    using ValueType = string_view;
+    static string_view parse(CommandLine & state, string_view name);
+    static std::size_t write(std::string & buffer, string_view value) {
+        buffer.append(value.data(), value.size());
+        return value.size();
+    }
+};
 
 template <> struct ValueTrait<int> {
     using NameType = CowStr;
     using ValueType = int;
-    static ValueType parse(CommandLine & command_line, NameType const & name);
+    static int parse(CommandLine & state, string_view name);
 };
 
 template <typename... Types> struct ValueTrait<std::tuple<Types...>> {
     using NameType = std::array<CowStr, sizeof...(Types)>;
     using ValueType = std::tuple<typename ValueTrait<Types>::ValueType...>;
-    static ValueType parse(CommandLine & command_line, NameType const & names);
-    // TODO use parse N times with Types. Needs integer sequence
+
+    static ValueType parse(CommandLine & state, NameType const & names) {
+        return parse_impl(state, names, std::make_index_sequence<sizeof...(Types)>{});
+    }
+
+  private:
+    template <std::size_t... I>
+    static ValueType
+    parse_impl(CommandLine & state, NameType const & names, std::index_sequence<I...>) {
+        return {ValueTrait<Types>::parse(state, names[I])...};
+    }
 };
+
+// TODO print defaults.
+// TODO use trait to define write overloads for many.
+// TODO format(const T &...), format_to(string&, const T&...)
 
 /******************************************************************************
  * Option types.

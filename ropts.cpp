@@ -1,7 +1,8 @@
 #include "ropts.h"
 
-#include <cstdio>  // FILE* based IO
-#include <ostream> // std::ostream IO
+#include <charconv> // from_chars (C++17)
+#include <cstdio>   // FILE* based IO
+#include <ostream>  // std::ostream IO
 #include <string>
 
 namespace ropts {
@@ -25,6 +26,7 @@ struct StreamOutput : Output {
     void write(string_view sv) final { out_.write(sv.data(), sv.size()); }
 };
 
+// TODO replace with something else
 struct FormatBuffer {
     std::string buffer;
 
@@ -49,9 +51,75 @@ struct DummyFormatBuffer {
 };
 
 /******************************************************************************
- * Implementations.
+ * Command line decomposition.
+ */
+std::optional<string_view> CommandLine::next() {
+    if(current_element_) {
+        string_view current = *current_element_;
+        current_element_.reset();
+        return current;
+    } else if(next_argument_ < argc_) {
+        auto current = string_view{argv_[next_argument_]};
+        next_argument_ += 1;
+        return current;
+    } else {
+        return {};
+    }
+}
+
+void CommandLine::push_front(string_view element) {
+    assert(!current_element_);
+    current_element_ = element;
+}
+
+/******************************************************************************
+ * ValueTrait
  */
 
+static string_view next_or_fail(CommandLine & state, string_view name) {
+    std::optional<string_view> next = state.next();
+    if(next) {
+        return *next;
+    } else {
+        FormatBuffer error;
+        error.push("missing value '");
+        error.push(name);
+        error.push('\'');
+        throw Exception(std::move(error.buffer));
+    }
+}
+
+string_view ValueTrait<string_view>::parse(CommandLine & state, string_view name) {
+    return next_or_fail(state, name);
+}
+
+template <typename T>
+static T parse_with_from_chars(CommandLine & state, string_view name, string_view type_name) {
+    string_view text = next_or_fail(state, name);
+    T value;
+    std::from_chars_result result = std::from_chars(text.begin(), text.end(), value);
+    if(result.ptr == text.end()) {
+        return value;
+    } else {
+        FormatBuffer error;
+        error.push("value '");
+        error.push(name);
+        error.push("' is not a valid ");
+        error.push(type_name);
+        error.push(": '");
+        error.push(text);
+        error.push('\'');
+        throw Exception(std::move(error.buffer));
+    }
+}
+
+int ValueTrait<int>::parse(CommandLine & state, string_view name) {
+    return parse_with_from_chars<int>(state, name, "integer");
+}
+
+/******************************************************************************
+ * OptionBase
+ */
 string_view OptionBase::name() const noexcept {
     if(has_long_name()) {
         return long_name();
@@ -70,15 +138,18 @@ void OptionBase::fail_option_repeated() const {
 }
 void OptionBase::fail_parsing_error(string_view msg) const {
     FormatBuffer error;
-    error.push("parsing error in option '");
+    error.push("option '");
     error.push(name());
     error.push("': ");
     error.push(msg);
     throw Exception(std::move(error.buffer));
 }
 
+/******************************************************************************
+ * Application
+ */
 template <typename Predicate>
-OptionBase * find(std::vector<OptionBase *> & options, Predicate predicate) {
+static OptionBase * find(std::vector<OptionBase *> & options, Predicate predicate) {
     for(OptionBase * option : options) {
         if(predicate(option)) {
             return option;
@@ -88,11 +159,10 @@ OptionBase * find(std::vector<OptionBase *> & options, Predicate predicate) {
 }
 
 void Application::parse(CommandLine command_line) {
-
     bool enable_option_parsing = true; // Set to false if '--' is encountered.
 
-    while(command_line.read_next_element()) {
-        string_view element = command_line.current_element();
+    while(std::optional<string_view> maybe_element = command_line.next()) {
+        string_view element = *maybe_element;
         if(enable_option_parsing && element.size() >= 2 && element[0] == '-' && element[1] == '-') {
             // Long option
             string_view option_name = string_view{&element[2], element.size() - 2};
@@ -106,7 +176,7 @@ void Application::parse(CommandLine command_line) {
                     return o->long_name() == option_name;
                 });
                 if(option != nullptr) {
-                    // TODO option parsing. Value starts in next element
+                    option->parse(command_line);
                 } else {
                     FormatBuffer error;
                     error.push("unknown option name: '");
@@ -130,7 +200,7 @@ void Application::parse(CommandLine command_line) {
                 return o->short_name() == option_name; //
             });
             if(option != nullptr) {
-                // TODO option parsing, value in next element
+                option->parse(command_line);
             } else {
                 FormatBuffer error;
                 error.push("unknown option name: '");

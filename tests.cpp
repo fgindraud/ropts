@@ -39,4 +39,12 @@ TEST_CASE("temporary") {
     app.add(triple);
 
     app.write_usage(stderr);
+
+    // TODO add tests for parsing
+    try {
+        char const * argv[] = {"", "-t", "42", "-a"};
+        app.parse({4, argv});
+    } catch(Exception const & e) {
+        std::fprintf(stderr, "Error: %s\n", e.what());
+    }
 }
