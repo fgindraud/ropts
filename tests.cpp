@@ -27,13 +27,13 @@ TEST_CASE("cow_str") {
 TEST_CASE("temporary") {
     Application app{"test"};
 
-    Option<SetOnce<int>> factor{'f'};
+    OptionSingle<int> factor{'f'};
     factor.help_text = "Integer factor";
     factor.value_name = "N";
     factor.value = 42;
     app.add(factor);
 
-    Option<SetOnce<std::tuple<int, int, int>>> triple{'t', "triple"};
+    OptionSingle<std::tuple<int, int, int>> triple{'t', "triple"};
     triple.help_text = "Make a tuple with 3 elements";
     triple.value_name = {"A", "B", "C"};
     app.add(triple);

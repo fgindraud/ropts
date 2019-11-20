@@ -179,7 +179,6 @@ template <> struct ValueTrait<int> {
     using NameType = CowStr;
     using ValueType = int;
     static ValueType parse(CommandLine & command_line, NameType const & name);
-    // TODO parse once.
 };
 
 template <typename... Types> struct ValueTrait<std::tuple<Types...>> {
@@ -193,14 +192,7 @@ template <typename... Types> struct ValueTrait<std::tuple<Types...>> {
  * Option types.
  */
 
-// Options are described by an action type tag.
-template <typename Action> struct Option;
-
-// Action tag : store a T value once.
-template <typename T> struct SetOnce;
-
 // Base type for options, required by Application.
-// Option<T> should always inherit this class.
 class OptionBase {
   public:
     // Constructors : require at least one name
@@ -256,7 +248,7 @@ class OptionBase {
     char short_name_ = '\0'; // '\0' represent invalid
 };
 
-// Flag
+/// Flag that can be set once or more
 struct Flag final : OptionBase {
     bool value() const noexcept { return nb_occurrences() > 0; }
 
@@ -264,8 +256,10 @@ struct Flag final : OptionBase {
     void parse_impl(CommandLine &) override {}
 };
 
-template <typename T> struct Option<SetOnce<T>> final : OptionBase {
-    using OptionBase::OptionBase; // Inherit constructors with option names
+/// Option with value of type T that can be set only once
+template <typename T> struct OptionSingle final : OptionBase {
+    // TODO required flag ?
+    using OptionBase::OptionBase;
 
     // Can be set to have a default value
     std::optional<typename ValueTrait<T>::ValueType> value;
@@ -279,6 +273,25 @@ template <typename T> struct Option<SetOnce<T>> final : OptionBase {
         }
         try {
             value = ValueTrait<T>::parse(state, value_name);
+        } catch(std::exception const & e) {
+            fail_parsing_error(e.what());
+        }
+    }
+};
+
+/// Option that can be called multiple times, storing the results in a vector
+template <typename T> struct OptionMultiple final : OptionBase {
+    // TODO min/max conditions ?
+    using OptionBase::OptionBase;
+
+    std::vector<typename ValueTrait<T>::ValueType> values;
+    typename ValueTrait<T>::NameType value_name;
+
+    Slice<CowStr> value_names() const override { return Slice<CowStr>{value_name}; }
+
+    void parse_impl(CommandLine & state) override {
+        try {
+            values.push_back(ValueTrait<T>::parse(state, value_name));
         } catch(std::exception const & e) {
             fail_parsing_error(e.what());
         }
