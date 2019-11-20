@@ -52,6 +52,31 @@ struct DummyFormatBuffer {
  * Implementations.
  */
 
+string_view OptionBase::name() const noexcept {
+    if(has_long_name()) {
+        return long_name();
+    } else {
+        assert(has_short_name());
+        return string_view{&short_name_, 1};
+    }
+}
+
+void OptionBase::fail_option_repeated() const {
+    FormatBuffer error;
+    error.push("option '");
+    error.push(name());
+    error.push("' cannot be used more than once");
+    throw Exception(std::move(error.buffer));
+}
+void OptionBase::fail_parsing_error(string_view msg) const {
+    FormatBuffer error;
+    error.push("parsing error in option '");
+    error.push(name());
+    error.push("': ");
+    error.push(msg);
+    throw Exception(std::move(error.buffer));
+}
+
 template <typename Predicate>
 OptionBase * find(std::vector<OptionBase *> & options, Predicate predicate) {
     for(OptionBase * option : options) {
@@ -62,7 +87,7 @@ OptionBase * find(std::vector<OptionBase *> & options, Predicate predicate) {
     return nullptr;
 }
 
-std::optional<std::string> Application::parse(CommandLine command_line) {
+void Application::parse(CommandLine command_line) {
 
     bool enable_option_parsing = true; // Set to false if '--' is encountered.
 
@@ -78,7 +103,7 @@ std::optional<std::string> Application::parse(CommandLine command_line) {
                 // '--name'
                 // TODO support '--name=blah' mode
                 OptionBase * option = find(options_, [option_name](OptionBase * o) {
-                    return o->long_name == option_name;
+                    return o->long_name() == option_name;
                 });
                 if(option != nullptr) {
                     // TODO option parsing. Value starts in next element
@@ -87,7 +112,7 @@ std::optional<std::string> Application::parse(CommandLine command_line) {
                     error.push("unknown option name: '");
                     error.push(element);
                     error.push('\'');
-                    return std::move(error.buffer);
+                    throw Exception(std::move(error.buffer));
                 }
             }
         } else if(enable_option_parsing && element.size() >= 2 && element[0] == '-') {
@@ -97,12 +122,12 @@ std::optional<std::string> Application::parse(CommandLine command_line) {
                 error.push("packed short options are not supported: '");
                 error.push(element);
                 error.push('\'');
-                return std::move(error.buffer);
+                throw Exception(std::move(error.buffer));
             }
             // '-c'
             char option_name = element[1];
             OptionBase * option = find(options_, [option_name](OptionBase * o) {
-                return o->short_name == option_name; //
+                return o->short_name() == option_name; //
             });
             if(option != nullptr) {
                 // TODO option parsing, value in next element
@@ -111,7 +136,7 @@ std::optional<std::string> Application::parse(CommandLine command_line) {
                 error.push("unknown option name: '");
                 error.push(element);
                 error.push('\'');
-                return std::move(error.buffer);
+                throw Exception(std::move(error.buffer));
             }
         } else {
             // TODO
@@ -120,7 +145,6 @@ std::optional<std::string> Application::parse(CommandLine command_line) {
             // Or error
         }
     }
-    return {}; // Success
 }
 
 static void write_usage_impl(
@@ -139,16 +163,16 @@ static void write_usage_impl(
             size += buffer.push("  ");
             if(option.has_short_name()) {
                 size += buffer.push('-');
-                size += buffer.push(option.short_name);
+                size += buffer.push(option.short_name());
             }
-            if(option.has_short_name() && !option.long_name.empty()) {
+            if(option.has_short_name() && option.has_long_name()) {
                 size += buffer.push(',');
             }
-            if(!option.long_name.empty()) {
+            if(option.has_long_name()) {
                 size += buffer.push("--");
-                size += buffer.push(option.long_name);
+                size += buffer.push(option.long_name());
             }
-            for(const CowStr & value_name : option.usage_value_names()) {
+            for(const CowStr & value_name : option.value_names()) {
                 size += buffer.push(' ');
                 size += buffer.push(value_name);
             }

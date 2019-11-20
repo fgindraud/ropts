@@ -3,10 +3,12 @@
 
 #include <array>
 #include <cassert>
-#include <cstdint>    // std::uint32_t in CowStr
-#include <cstdio>     // std::FILE
-#include <iosfwd>     // std::ostream
-#include <string>     // std::char_traits in CowStr
+#include <cstdint>   // std::uint32_t in CowStr
+#include <cstdio>    // std::FILE
+#include <exception> // std::exception
+#include <iosfwd>    // std::ostream
+#include <string>    // std::char_traits in CowStr
+#include <tuple>
 #include <vector>
 
 // TODO compat C++14 ?
@@ -16,28 +18,38 @@ namespace ropts {
 using std::string_view;
 }
 
-
 /* Command line parser.
- * 
+ *
  * Avoids allocations whevener possible.
  * Allocates when:
  * - non literal strings are used.
  * - errors are returned.
  */
-
 namespace ropts {
-// Slice<T> : reference to const T[n]
+
+/// Exception type used to report parsing errors.
+struct Exception final : std::exception {
+    std::string error;
+
+    Exception() = default;
+    Exception(std::string && message) : error(std::move(message)) {}
+
+    char const * what() const noexcept override { return error.data(); }
+};
+
+/// Slice<T> : reference to const T[n]
 template <typename T> struct Slice {
     const T * base{nullptr};
     std::size_t size{0};
 
-    Slice() = default;
-    template <std::size_t N> explicit Slice(std::array<T, N> const & a) : base(a.data()), size(N) {}
-    explicit Slice(T const & t) : base(&t), size(1) {}
+    Slice() noexcept = default;
+    template <std::size_t N>
+    explicit Slice(std::array<T, N> const & a) noexcept : base(a.data()), size(N) {}
+    explicit Slice(T const & t) noexcept : base(&t), size(1) {}
 
-    const T & operator[](std::size_t n) const { return base[n]; }
-    const T * begin() const { return base; }
-    const T * end() const { return base + size; }
+    const T & operator[](std::size_t n) const noexcept { return base[n]; }
+    const T * begin() const noexcept { return base; }
+    const T * end() const noexcept { return base + size; }
 };
 
 /******************************************************************************
@@ -122,6 +134,8 @@ class CowStr {
     }
 };
 
+static_assert(sizeof(CowStr) == sizeof(string_view));
+
 /******************************************************************************
  * Cuts a command line into string_view elements.
  */
@@ -156,95 +170,126 @@ class CommandLine {
 };
 
 /******************************************************************************
+ * Parsable value types.
+ */
+
+template <typename Specification> struct ValueTrait;
+
+template <> struct ValueTrait<int> {
+    using NameType = CowStr;
+    using ValueType = int;
+    static ValueType parse(CommandLine & command_line, NameType const & name);
+    // TODO parse once.
+};
+
+template <typename... Types> struct ValueTrait<std::tuple<Types...>> {
+    using NameType = std::array<CowStr, sizeof...(Types)>;
+    using ValueType = std::tuple<typename ValueTrait<Types>::ValueType...>;
+    static ValueType parse(CommandLine & command_line, NameType const & names);
+    // TODO use parse N times with Types. Needs integer sequence
+};
+
+/******************************************************************************
  * Option types.
  */
 
-// Occurrence requirement, must fall between [min,max].
-struct Occurrence {
-    std::uint16_t min;
-    std::uint16_t max;
-    std::uint16_t seen = 0;
+// Options are described by an action type tag.
+template <typename Action> struct Option;
 
-    constexpr Occurrence(std::uint16_t min_, std::uint16_t max_) noexcept : min(min_), max(max_) {
-        assert(min <= max);
+// Action tag : store a T value once.
+template <typename T> struct SetOnce;
+
+// Base type for options, required by Application.
+// Option<T> should always inherit this class.
+class OptionBase {
+  public:
+    // Constructors : require at least one name
+    explicit OptionBase(char short_name) noexcept : short_name_(short_name) {
+        assert(has_short_name());
     }
-};
-constexpr Occurrence exactly_once = Occurrence{1, 1};
-constexpr Occurrence maybe_once = Occurrence{0, 1};
-constexpr Occurrence at_least_once = Occurrence{1, UINT16_MAX};
-constexpr Occurrence any_number = Occurrence{0, UINT16_MAX};
+    explicit OptionBase(CowStr long_name) noexcept : long_name_(std::move(long_name)) {
+        assert(has_long_name());
+    }
+    OptionBase(char short_name, CowStr long_name) noexcept
+        : long_name_(std::move(long_name)), short_name_(short_name) {
+        assert(has_short_name());
+        assert(has_long_name());
+    }
 
-struct OptionBase {
-    Occurrence occurrence = maybe_once;
-    char short_name = '\0';
-    CowStr long_name;
-    CowStr help_text;
-    CowStr doc_text;
-
-    OptionBase() = default;
-    explicit OptionBase(char short_name_) : short_name(short_name_) {}
-    explicit OptionBase(CowStr long_name_) : long_name(std::move(long_name_)) {}
-    OptionBase(char short_name_, CowStr long_name_)
-        : short_name(short_name_), long_name(std::move(long_name_)) {}
-
+    // Cannot be relocated (would invalidate registration)
     virtual ~OptionBase() = default;
     OptionBase(const OptionBase &) = delete;
     OptionBase(OptionBase &&) = delete;
     OptionBase & operator=(const OptionBase &) = delete;
     OptionBase & operator=(OptionBase &&) = delete;
 
-    bool has_short_name() const noexcept { return short_name != '\0'; }
+    // Access option names (not mutable)
+    char short_name() const noexcept { return short_name_; }
+    bool has_short_name() const noexcept { return short_name_ != '\0'; }
+    string_view long_name() const noexcept { return long_name_; }
+    bool has_long_name() const noexcept { return !long_name_.empty(); }
+    string_view name() const noexcept;
 
-    virtual void parse(CommandLine & state) = 0;
-    virtual Slice<CowStr> usage_value_names() const = 0;
+    std::size_t nb_occurrences() const noexcept { return nb_occurrences_; }
 
-    // FIXME interface for multi args ?
-    // Check (required, ...)
+    void parse(CommandLine & state) {
+        parse_impl(state);
+        nb_occurrences_ += 1;
+    }
+
+    virtual Slice<CowStr> value_names() const = 0;
+
+  protected:
+    virtual void parse_impl(CommandLine & state) = 0;
+
+    [[noreturn]] void fail_option_repeated() const;
+    [[noreturn]] void fail_parsing_error(string_view msg) const;
+
+  public:
+    // Public properties
+    CowStr help_text;
+    CowStr doc_text;
+
+  private:
+    CowStr long_name_;
+    std::uint16_t nb_occurrences_ = 0;
+    char short_name_ = '\0'; // '\0' represent invalid
 };
 
-template <typename ValueSpec> struct ValueTraits;
+// Flag
+struct Flag final : OptionBase {
+    bool value() const noexcept { return nb_occurrences() > 0; }
 
-template <> struct ValueTraits<int> {
-    using Type = int;
-    using ValueName = CowStr;
-    static void parse(int & value, CommandLine & state, ValueName const & name) {
-        // Start from global parse function
+    Slice<CowStr> value_names() const override { return Slice<CowStr>{}; }
+    void parse_impl(CommandLine &) override {}
+};
+
+template <typename T> struct Option<SetOnce<T>> final : OptionBase {
+    using OptionBase::OptionBase; // Inherit constructors with option names
+
+    // Can be set to have a default value
+    std::optional<typename ValueTrait<T>::ValueType> value;
+    typename ValueTrait<T>::NameType value_name;
+
+    Slice<CowStr> value_names() const override { return Slice<CowStr>{value_name}; }
+
+    void parse_impl(CommandLine & state) override {
+        if(nb_occurrences() > 0) {
+            fail_option_repeated();
+        }
+        try {
+            value = ValueTrait<T>::parse(state, value_name);
+        } catch(std::exception const & e) {
+            fail_parsing_error(e.what());
+        }
     }
 };
 
-// Arity
-struct Dynamic {
-    using ValueNameType = CowStr;
-    using CallbackInputType = CommandLine &;
-};
-template <std::size_t N> struct Fixed {
-    static_assert(N > 0, "Use Flag instead of O-arity option");
-    using ValueNameType = std::array<CowStr, N>;
-    using CallbackInputType = Slice<string_view>;
-};
-template <> struct Fixed<1> {
-    using ValueNameType = CowStr;
-    using CallbackInputType = string_view;
-};
-
-template <typename T, typename Arity = Fixed<1>> struct Option final : OptionBase {
-    std::optional<T> value; // default value if the optional is filled
-    typename Arity::ValueNameType value_name;
-
-    using OptionBase::OptionBase;
-
-    void parse(CommandLine & state) override {
-        // TODO
-    }
-    Slice<CowStr> usage_value_names() const override { return Slice<CowStr>{value_name}; }
-};
-
-//
-struct Flag : OptionBase {
-    bool value = false;
-
-    Slice<CowStr> usage_value_names() const override { return Slice<CowStr>{}; }
-};
+/******************************************************************************
+ * Application.
+ *
+ * TODO intrusive lists ?
+ */
 
 struct OptionGroup {
     enum class Constraint {
@@ -268,8 +313,7 @@ class Application {
     void add(OptionBase & option) { options_.emplace_back(&option); }
 
     // Parse command_line and fills registered options.
-    // Return : empty optional on success, or an error message.
-    std::optional<std::string> parse(CommandLine command_line);
+    void parse(CommandLine command_line);
 
     void write_usage(std::FILE * out) const;
     void write_usage(std::ostream & out) const;
@@ -282,8 +326,6 @@ class Application {
     // TODO positionals = Options without name ?
     // TODO subcommands
 };
-
-// TODO use intrusive lists
 
 } // namespace ropts
 
