@@ -1,7 +1,8 @@
 #include "ropts.h"
 
-#include <charconv> // from_chars (C++17)
+#include <charconv> // from_chars / to_chars (C++17)
 #include <cstdio>   // FILE* based IO
+#include <limits>   // digits10 for write_numeric
 #include <ostream>  // std::ostream IO
 #include <string>
 
@@ -45,12 +46,9 @@ static string_view next_or_fail(CommandLine & state, string_view name) {
     }
 }
 
-string_view ValueTrait<string_view>::parse(CommandLine & state, string_view name) {
-    return next_or_fail(state, name);
-}
-
+// Parse a numeric value using from_chars
 template <typename T>
-static T parse_with_from_chars(CommandLine & state, string_view name, string_view type_name) {
+static T parse_numeric(CommandLine & state, string_view name, string_view type_name) {
     string_view text = next_or_fail(state, name);
     T value;
     std::from_chars_result result = std::from_chars(text.begin(), text.end(), value);
@@ -69,8 +67,40 @@ static T parse_with_from_chars(CommandLine & state, string_view name, string_vie
     }
 }
 
+// Write a numeric value using to_chars
+// estimated_size is an heuristic estimation of written size ; better to overapproximate
+template <typename T>
+static std::size_t write_numeric(std::string & buffer, T value, std::size_t estimated_size) {
+    std::size_t init_buf_size = buffer.size();
+    while(true) {
+        // Try writing to the buffer + estimated_size bytes
+        std::size_t temporary_size = init_buf_size + estimated_size;
+        buffer.resize(temporary_size);
+        std::to_chars_result result =
+            std::to_chars(&buffer[init_buf_size], &buffer[temporary_size], value);
+        if(result.ec == std::errc{}) {
+            assert(&buffer[init_buf_size] <= result.ptr);
+            assert(result.ptr <= &buffer[temporary_size]);
+            // Trim the buffer to what was written (remove unwritten space)
+            std::size_t new_buf_size = result.ptr - buffer.data();
+            buffer.resize(new_buf_size);
+            return new_buf_size - init_buf_size;
+        } else {
+            // Try again with bigger space
+            estimated_size *= 2;
+        }
+    }
+}
+
+string_view ValueTrait<string_view>::parse(CommandLine & state, string_view name) {
+    return next_or_fail(state, name);
+}
+
 int ValueTrait<int>::parse(CommandLine & state, string_view name) {
-    return parse_with_from_chars<int>(state, name, "integer");
+    return parse_numeric<int>(state, name, "integer (int)");
+}
+std::size_t ValueTrait<int>::write(std::string & buffer, int value) {
+    return write_numeric<int>(buffer, value, std::numeric_limits<int>::digits10 + 2);
 }
 
 /******************************************************************************

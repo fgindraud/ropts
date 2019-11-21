@@ -24,6 +24,46 @@ TEST_CASE("cow_str") {
     CHECK(s.type() == CowStr::Type::Borrowed);
 }
 
+TEST_CASE("text_conversion") {
+    {
+        // Text formatting
+        std::string buf;
+        CHECK(write_text(buf, "blah ") == 5);
+        CHECK(write_text(buf, '!') == 1);
+        CHECK(buf == "blah !");
+    }
+    {
+        // Num to str
+        std::string buf;
+        CHECK(write_value(buf, int(42)) == 2);
+        CHECK(buf == "42");
+        CHECK(write_value(buf, int(-4000)) == 5);
+        CHECK(buf == "42-4000");
+    }
+    {
+        // Str to num
+        constexpr int argc = 7;
+        char const * argv[argc] = {"ignored", "42", "-4000", "007", " -4444", "45.67", "azerty"};
+        CommandLine state{argc, argv};
+        CHECK(ValueTrait<int>::parse(state, "a") == 42);
+        CHECK(ValueTrait<int>::parse(state, "a") == -4000);
+        CHECK(ValueTrait<int>::parse(state, "a") == 7);
+        CHECK_THROWS_AS_MESSAGE(
+            ValueTrait<int>::parse(state, "a"),
+            Exception,
+            "value 'a' is not a valid integer (int): ' -4444'");
+        CHECK_THROWS_AS_MESSAGE(
+            ValueTrait<int>::parse(state, "a"),
+            Exception,
+            "value 'a' is not a valid integer (int): '45.67'");
+        CHECK_THROWS_AS_MESSAGE(
+            ValueTrait<int>::parse(state, "a"),
+            Exception,
+            "value 'a' is not a valid integer (int): 'azerty'");
+        CHECK_THROWS_AS_MESSAGE(ValueTrait<int>::parse(state, "a"), Exception, "missing value 'a'");
+    }
+}
+
 TEST_CASE("temporary") {
     Application app{"test"};
 
@@ -40,7 +80,7 @@ TEST_CASE("temporary") {
 
     app.write_usage(stderr);
 
-    // TODO add tests for parsing
+    // TODO add tests for parsing system wide
     try {
         char const * argv[] = {"", "-t", "42", "-a"};
         app.parse({4, argv});

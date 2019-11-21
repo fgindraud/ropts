@@ -13,6 +13,9 @@
 #include <vector>
 
 // TODO compat C++14 ?
+// Optional
+// string_view
+// to_chars / from_chars : use snprintf / strtol + string construction(null termination...)
 #include <optional>
 #include <string_view>
 namespace ropts {
@@ -210,6 +213,7 @@ template <> struct ValueTrait<int> {
     using NameType = CowStr;
     using ValueType = int;
     static int parse(CommandLine & state, string_view name);
+    static std::size_t write(std::string & buffer, int value);
 };
 
 template <typename... Types> struct ValueTrait<std::tuple<Types...>> {
@@ -229,8 +233,6 @@ template <typename... Types> struct ValueTrait<std::tuple<Types...>> {
 };
 
 // TODO print defaults.
-// TODO use trait to define write overloads for many.
-// TODO format(const T &...), format_to(string&, const T&...)
 
 /******************************************************************************
  * Option types.
