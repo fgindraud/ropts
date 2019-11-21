@@ -203,25 +203,16 @@ void Application::parse(CommandLine command_line) {
     }
 }
 
-// Formatting tools
-struct Output {
-    virtual ~Output() = default;
-    virtual void write(string_view sv) = 0;
-    void write_buffer(std::string & buffer) {
-        write(string_view(buffer));
-        buffer.clear(); // Should not destroy allocation.
-    }
-};
-struct FileOutput : Output {
-    std::FILE * out_;
-    FileOutput(std::FILE * out) : out_(out) {}
-    void write(string_view sv) final { std::fwrite(sv.data(), 1, sv.size(), out_); }
-};
-struct StreamOutput : Output {
-    std::ostream & out_;
-    StreamOutput(std::ostream & out) : out_(out) {}
-    void write(string_view sv) final { out_.write(sv.data(), sv.size()); }
-};
+// Output "independence" wrappers : write buffer to output and clear.
+// string::clear() should not reallocate in most cases.
+static void flush_buffer(std::FILE * out, std::string & buffer) {
+    std::fwrite(buffer.data(), 1, buffer.size(), out);
+    buffer.clear();
+}
+static void flush_buffer(std::ostream & out, std::string & buffer) {
+    out.write(buffer.data(), buffer.size());
+    buffer.clear();
+}
 
 // Dummy buffer to count size
 struct DummyBuffer {};
@@ -232,14 +223,15 @@ static std::size_t write_text(DummyBuffer, char) {
     return 1;
 }
 
+template <typename Output>
 static void write_usage_impl(
-    Output & output, string_view application_name, std::vector<OptionBase *> const & options) {
+    Output && output, string_view application_name, std::vector<OptionBase *> const & options) {
     std::string buffer;
     // Header
     {
         write_text(buffer, application_name);
         write_text(buffer, " [options]\n\n");
-        output.write_buffer(buffer);
+        flush_buffer(output, buffer);
     }
     // Option printing
     {
@@ -270,7 +262,8 @@ static void write_usage_impl(
             help_text_offset = std::max(help_text_offset, option_pattern_len + 3);
         }
         // Printing
-        output.write("Options:\n");
+        write_text(buffer, "Options:\n");
+        flush_buffer(output, buffer);
         for(const OptionBase * option : options) {
             std::size_t size = write_option_pattern(buffer, *option);
             while(size < help_text_offset) {
@@ -278,18 +271,16 @@ static void write_usage_impl(
             }
             write_text(buffer, option->help_text); // TODO line wrapping. Use terminal size ?
             write_text(buffer, '\n');
-            output.write_buffer(buffer);
+            flush_buffer(output, buffer);
         }
     }
 }
 
 void Application::write_usage(std::FILE * out) const {
-    FileOutput file_output{out};
-    write_usage_impl(file_output, string_view(name_), options_);
+    write_usage_impl(out, string_view(name_), options_);
 }
 void Application::write_usage(std::ostream & out) const {
-    StreamOutput stream_output{out};
-    write_usage_impl(stream_output, string_view(name_), options_);
+    write_usage_impl(out, string_view(name_), options_);
 }
 
 } // namespace ropts
