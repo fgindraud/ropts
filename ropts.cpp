@@ -7,50 +7,6 @@
 
 namespace ropts {
 /******************************************************************************
- * Formatting tools.
- */
-
-struct Output {
-    virtual ~Output() = default;
-    virtual void write(string_view sv) = 0;
-};
-
-struct FileOutput : Output {
-    std::FILE * out_;
-    FileOutput(std::FILE * out) : out_(out) {}
-    void write(string_view sv) final { std::fwrite(sv.data(), 1, sv.size(), out_); }
-};
-struct StreamOutput : Output {
-    std::ostream & out_;
-    StreamOutput(std::ostream & out) : out_(out) {}
-    void write(string_view sv) final { out_.write(sv.data(), sv.size()); }
-};
-
-// TODO replace with something else
-struct FormatBuffer {
-    std::string buffer;
-
-    std::size_t push(char c) {
-        buffer.push_back(c);
-        return 1;
-    }
-    std::size_t push(string_view sv) {
-        buffer.append(sv.data(), sv.size());
-        return sv.size();
-    }
-
-    void write_to(Output & output) {
-        output.write(string_view(buffer));
-        buffer.clear(); // Should not destroy allocation.
-    }
-};
-
-struct DummyFormatBuffer {
-    std::size_t push(char) { return 1; }
-    std::size_t push(string_view sv) { return sv.size(); }
-};
-
-/******************************************************************************
  * Command line decomposition.
  */
 std::optional<string_view> CommandLine::next() {
@@ -81,11 +37,11 @@ static string_view next_or_fail(CommandLine & state, string_view name) {
     if(next) {
         return *next;
     } else {
-        FormatBuffer error;
-        error.push("missing value '");
-        error.push(name);
-        error.push('\'');
-        throw Exception(std::move(error.buffer));
+        std::string buf;
+        write_text(buf, "missing value '");
+        write_text(buf, name);
+        write_text(buf, '\'');
+        throw Exception(std::move(buf));
     }
 }
 
@@ -101,15 +57,15 @@ static T parse_with_from_chars(CommandLine & state, string_view name, string_vie
     if(result.ptr == text.end()) {
         return value;
     } else {
-        FormatBuffer error;
-        error.push("value '");
-        error.push(name);
-        error.push("' is not a valid ");
-        error.push(type_name);
-        error.push(": '");
-        error.push(text);
-        error.push('\'');
-        throw Exception(std::move(error.buffer));
+        std::string buf;
+        write_text(buf, "value '");
+        write_text(buf, name);
+        write_text(buf, "' is not a valid ");
+        write_text(buf, type_name);
+        write_text(buf, ": '");
+        write_text(buf, text);
+        write_text(buf, '\'');
+        throw Exception(std::move(buf));
     }
 }
 
@@ -130,19 +86,19 @@ string_view OptionBase::name() const noexcept {
 }
 
 void OptionBase::fail_option_repeated() const {
-    FormatBuffer error;
-    error.push("option '");
-    error.push(name());
-    error.push("' cannot be used more than once");
-    throw Exception(std::move(error.buffer));
+    std::string buf;
+    write_text(buf, "option '");
+    write_text(buf, name());
+    write_text(buf, "' cannot be used more than once");
+    throw Exception(std::move(buf));
 }
 void OptionBase::fail_parsing_error(string_view msg) const {
-    FormatBuffer error;
-    error.push("option '");
-    error.push(name());
-    error.push("': ");
-    error.push(msg);
-    throw Exception(std::move(error.buffer));
+    std::string buf;
+    write_text(buf, "option '");
+    write_text(buf, name());
+    write_text(buf, "': ");
+    write_text(buf, msg);
+    throw Exception(std::move(buf));
 }
 
 /******************************************************************************
@@ -178,21 +134,21 @@ void Application::parse(CommandLine command_line) {
                 if(option != nullptr) {
                     option->parse(command_line);
                 } else {
-                    FormatBuffer error;
-                    error.push("unknown option name: '");
-                    error.push(element);
-                    error.push('\'');
-                    throw Exception(std::move(error.buffer));
+                    std::string buf;
+                    write_text(buf, "unknown option name: '");
+                    write_text(buf, element);
+                    write_text(buf, '\'');
+                    throw Exception(std::move(buf));
                 }
             }
         } else if(enable_option_parsing && element.size() >= 2 && element[0] == '-') {
             // Short option
             if(element.size() > 2) {
-                FormatBuffer error;
-                error.push("packed short options are not supported: '");
-                error.push(element);
-                error.push('\'');
-                throw Exception(std::move(error.buffer));
+                std::string buf;
+                write_text(buf, "packed short options are not supported: '");
+                write_text(buf, element);
+                write_text(buf, '\'');
+                throw Exception(std::move(buf));
             }
             // '-c'
             char option_name = element[1];
@@ -202,11 +158,11 @@ void Application::parse(CommandLine command_line) {
             if(option != nullptr) {
                 option->parse(command_line);
             } else {
-                FormatBuffer error;
-                error.push("unknown option name: '");
-                error.push(element);
-                error.push('\'');
-                throw Exception(std::move(error.buffer));
+                std::string buf;
+                write_text(buf, "unknown option name: '");
+                write_text(buf, element);
+                write_text(buf, '\'');
+                throw Exception(std::move(buf));
             }
         } else {
             // TODO
@@ -217,54 +173,82 @@ void Application::parse(CommandLine command_line) {
     }
 }
 
+// Formatting tools
+struct Output {
+    virtual ~Output() = default;
+    virtual void write(string_view sv) = 0;
+    void write_buffer(std::string & buffer) {
+        write(string_view(buffer));
+        buffer.clear(); // Should not destroy allocation.
+    }
+};
+struct FileOutput : Output {
+    std::FILE * out_;
+    FileOutput(std::FILE * out) : out_(out) {}
+    void write(string_view sv) final { std::fwrite(sv.data(), 1, sv.size(), out_); }
+};
+struct StreamOutput : Output {
+    std::ostream & out_;
+    StreamOutput(std::ostream & out) : out_(out) {}
+    void write(string_view sv) final { out_.write(sv.data(), sv.size()); }
+};
+
+// Dummy buffer to count size
+struct DummyBuffer {};
+static std::size_t write_text(DummyBuffer, string_view sv) {
+    return sv.size();
+}
+static std::size_t write_text(DummyBuffer, char) {
+    return 1;
+}
+
 static void write_usage_impl(
     Output & output, string_view application_name, std::vector<OptionBase *> const & options) {
-    FormatBuffer buffer;
+    std::string buffer;
     // Header
     {
-        buffer.push(application_name);
-        buffer.push(" [options]\n\n");
-        buffer.write_to(output);
+        write_text(buffer, application_name);
+        write_text(buffer, " [options]\n\n");
+        output.write_buffer(buffer);
     }
     // Option printing
     {
         auto write_option_pattern = [](auto && buffer, OptionBase const & option) -> std::size_t {
             std::size_t size = 0;
-            size += buffer.push("  ");
+            size += write_text(buffer, "  ");
             if(option.has_short_name()) {
-                size += buffer.push('-');
-                size += buffer.push(option.short_name());
+                size += write_text(buffer, '-');
+                size += write_text(buffer, option.short_name());
             }
             if(option.has_short_name() && option.has_long_name()) {
-                size += buffer.push(',');
+                size += write_text(buffer, ',');
             }
             if(option.has_long_name()) {
-                size += buffer.push("--");
-                size += buffer.push(option.long_name());
+                size += write_text(buffer, "--");
+                size += write_text(buffer, option.long_name());
             }
             for(const CowStr & value_name : option.value_names()) {
-                size += buffer.push(' ');
-                size += buffer.push(value_name);
+                size += write_text(buffer, ' ');
+                size += write_text(buffer, value_name);
             }
             return size;
         };
         // Compute max size of an option text up to help_text for alignement.
         std::size_t help_text_offset = 0;
         for(const OptionBase * option : options) {
-            std::size_t option_pattern_len = write_option_pattern(DummyFormatBuffer{}, *option);
+            std::size_t option_pattern_len = write_option_pattern(DummyBuffer{}, *option);
             help_text_offset = std::max(help_text_offset, option_pattern_len + 3);
         }
         // Printing
-        buffer.push("Options:\n");
-        buffer.write_to(output);
+        output.write("Options:\n");
         for(const OptionBase * option : options) {
             std::size_t size = write_option_pattern(buffer, *option);
             while(size < help_text_offset) {
-                size += buffer.push(' ');
+                size += write_text(buffer, ' ');
             }
-            buffer.push(option->help_text); // TODO line wrapping. Use terminal size ?
-            buffer.push('\n');
-            buffer.write_to(output);
+            write_text(buffer, option->help_text); // TODO line wrapping. Use terminal size ?
+            write_text(buffer, '\n');
+            output.write_buffer(buffer);
         }
     }
 }

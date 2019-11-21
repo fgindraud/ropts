@@ -181,14 +181,28 @@ class CommandLine {
  */
 template <typename Specification> struct ValueTrait;
 
+/// Small formatting functions
+/// write_text: append a text value to buffer (literals, ...)
+inline std::size_t write_text(std::string & buffer, string_view s) {
+    buffer.append(s.data(), s.size());
+    return s.size();
+}
+inline std::size_t write_text(std::string & buffer, char c) {
+    buffer.push_back(c);
+    return 1;
+}
+/// write_value: writes a value using the formatting defined by ValueTrait.
+template <typename T> std::size_t write_value(std::string & buffer, T const & value) {
+    return ValueTrait<T>::write(buffer, value);
+}
+
 /// Returns slices of the input command_line, with process lifetime (safe)
 template <> struct ValueTrait<string_view> {
     using NameType = CowStr;
     using ValueType = string_view;
     static string_view parse(CommandLine & state, string_view name);
     static std::size_t write(std::string & buffer, string_view value) {
-        buffer.append(value.data(), value.size());
-        return value.size();
+        return write_text(buffer, value);
     }
 };
 
