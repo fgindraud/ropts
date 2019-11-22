@@ -152,6 +152,9 @@ class CommandLine {
     // Extract the next element
     std::optional<string_view> next();
 
+    // Extract one element, or throw with "missing value <value_name>" message.
+    string_view next_value_or_fail(string_view value_name);
+
     // Place an element at the front (only one at a time). Used to peek values.
     void push_front(string_view element);
 
@@ -181,6 +184,9 @@ class CommandLine {
  *   Returns the size of the written text.
  *   Used for printing default values and in error messages.
  *   For small types the 'value' can be passed by value.
+ *
+ * Traits for basic types may expose a parse function from string_view.
+ * This can be used to build user-specific parsers for complex cases.
  */
 template <typename Specification> struct ValueTrait;
 
@@ -195,7 +201,7 @@ inline std::size_t write_text(std::string & buffer, char c) {
     return 1;
 }
 /// write_value: writes a value using the formatting defined by ValueTrait.
-template <typename T> std::size_t write_value(std::string & buffer, T const & value) {
+template <typename T> inline std::size_t write_value(std::string & buffer, T const & value) {
     return ValueTrait<T>::write(buffer, value);
 }
 
@@ -203,7 +209,10 @@ template <typename T> std::size_t write_value(std::string & buffer, T const & va
 template <> struct ValueTrait<string_view> {
     using NameType = CowStr;
     using ValueType = string_view;
-    static string_view parse(CommandLine & state, string_view name);
+    // Inline impls, as they are very simple
+    static string_view parse(CommandLine & state, string_view name) {
+        return state.next_value_or_fail(name);
+    }
     static std::size_t write(std::string & buffer, string_view value) {
         return write_text(buffer, value);
     }
@@ -212,8 +221,25 @@ template <> struct ValueTrait<string_view> {
 template <> struct ValueTrait<int> {
     using NameType = CowStr;
     using ValueType = int;
+    static int parse(string_view text, string_view name);
     static int parse(CommandLine & state, string_view name);
     static std::size_t write(std::string & buffer, int value);
+};
+
+template <> struct ValueTrait<long> {
+    using NameType = CowStr;
+    using ValueType = long;
+    static long parse(string_view text, string_view name);
+    static long parse(CommandLine & state, string_view name);
+    static std::size_t write(std::string & buffer, long value);
+};
+
+template <> struct ValueTrait<double> {
+    using NameType = CowStr;
+    using ValueType = double;
+    static double parse(string_view text, string_view name);
+    static double parse(CommandLine & state, string_view name);
+    static std::size_t write(std::string & buffer, double value);
 };
 
 template <typename... Types> struct ValueTrait<std::tuple<Types...>> {

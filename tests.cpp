@@ -42,16 +42,12 @@ TEST_CASE("text_conversion") {
     }
     {
         // Str to num
-        constexpr int argc = 7;
-        char const * argv[argc] = {"ignored", "42", "-4000", "007", " -4444", "45.67", "azerty"};
+        constexpr int argc = 6;
+        char const * argv[argc] = {"ignored", "42", "-4000", "007", "45.67", "azerty"};
         CommandLine state{argc, argv};
         CHECK(ValueTrait<int>::parse(state, "a") == 42);
         CHECK(ValueTrait<int>::parse(state, "a") == -4000);
         CHECK(ValueTrait<int>::parse(state, "a") == 7);
-        CHECK_THROWS_AS_MESSAGE(
-            ValueTrait<int>::parse(state, "a"),
-            Exception,
-            "value 'a' is not a valid integer (int): ' -4444'");
         CHECK_THROWS_AS_MESSAGE(
             ValueTrait<int>::parse(state, "a"),
             Exception,

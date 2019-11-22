@@ -24,6 +24,19 @@ std::optional<string_view> CommandLine::next() {
     }
 }
 
+string_view CommandLine::next_value_or_fail(string_view value_name) {
+    std::optional<string_view> value = next();
+    if(value) {
+        return *value;
+    } else {
+        std::string buf;
+        write_text(buf, "missing value '");
+        write_text(buf, value_name);
+        write_text(buf, '\'');
+        throw Exception(std::move(buf));
+    }
+}
+
 void CommandLine::push_front(string_view element) {
     assert(!current_element_);
     current_element_ = element;
@@ -33,23 +46,9 @@ void CommandLine::push_front(string_view element) {
  * ValueTrait
  */
 
-static string_view next_or_fail(CommandLine & state, string_view name) {
-    std::optional<string_view> next = state.next();
-    if(next) {
-        return *next;
-    } else {
-        std::string buf;
-        write_text(buf, "missing value '");
-        write_text(buf, name);
-        write_text(buf, '\'');
-        throw Exception(std::move(buf));
-    }
-}
-
 // Parse a numeric value using from_chars
 template <typename T>
-static T parse_numeric(CommandLine & state, string_view name, string_view type_name) {
-    string_view text = next_or_fail(state, name);
+static T parse_numeric(string_view text, string_view name, string_view type_name) {
     T value;
     std::from_chars_result result = std::from_chars(text.begin(), text.end(), value);
     if(result.ptr == text.end()) {
@@ -69,8 +68,11 @@ static T parse_numeric(CommandLine & state, string_view name, string_view type_n
 
 // Write a numeric value using to_chars
 // estimated_size is an heuristic estimation of written size ; better to overapproximate
-template <typename T>
-static std::size_t write_numeric(std::string & buffer, T value, std::size_t estimated_size) {
+template <typename T> static std::size_t write_numeric(std::string & buffer, T value) {
+    std::size_t estimated_size =
+        std::numeric_limits<T>::is_integer
+            ? std::numeric_limits<T>::digits10 + 2  // Integers : max digits + space for '-'
+            : std::numeric_limits<T>::digits10 + 9; // Floats : max digits + '-0.' + 'e-300'
     std::size_t init_buf_size = buffer.size();
     while(true) {
         // Try writing to the buffer + estimated_size bytes
@@ -92,15 +94,34 @@ static std::size_t write_numeric(std::string & buffer, T value, std::size_t esti
     }
 }
 
-string_view ValueTrait<string_view>::parse(CommandLine & state, string_view name) {
-    return next_or_fail(state, name);
+int ValueTrait<int>::parse(string_view text, string_view name) {
+    return parse_numeric<int>(text, name, "integer (int)");
 }
-
 int ValueTrait<int>::parse(CommandLine & state, string_view name) {
-    return parse_numeric<int>(state, name, "integer (int)");
+    return parse(state.next_value_or_fail(name), name);
 }
 std::size_t ValueTrait<int>::write(std::string & buffer, int value) {
-    return write_numeric<int>(buffer, value, std::numeric_limits<int>::digits10 + 2);
+    return write_numeric<int>(buffer, value);
+}
+
+long ValueTrait<long>::parse(string_view text, string_view name) {
+    return parse_numeric<long>(text, name, "integer (long)");
+}
+long ValueTrait<long>::parse(CommandLine & state, string_view name) {
+    return parse(state.next_value_or_fail(name), name);
+}
+std::size_t ValueTrait<long>::write(std::string & buffer, long value) {
+    return write_numeric<long>(buffer, value);
+}
+
+double ValueTrait<double>::parse(string_view text, string_view name) {
+    return parse_numeric<double>(text, name, "float (double)");
+}
+double ValueTrait<double>::parse(CommandLine & state, string_view name) {
+    return parse(state.next_value_or_fail(name), name);
+}
+std::size_t ValueTrait<double>::write(std::string & buffer, double value) {
+    return write_numeric<double>(buffer, value);
 }
 
 /******************************************************************************
