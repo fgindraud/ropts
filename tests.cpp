@@ -39,15 +39,57 @@ TEST_CASE("text_conversion") {
         CHECK(buf == "42");
         CHECK(write_value(buf, int(-4000)) == 5);
         CHECK(buf == "42-4000");
+        buf.clear();
+        CHECK(write_value(buf, long(42)) == 2);
+        CHECK(buf == "42");
+        buf.clear();
+        CHECK(write_value(buf, float(42.1)) == 4);
+        CHECK(buf == "42.1");
+        buf.clear();
+        CHECK(write_value(buf, double(42.1)) == 4);
+        CHECK(buf == "42.1");
+        buf.clear();
+        CHECK(write_value(buf, static_cast<long double>(42.1)) == 4);
+        CHECK(buf == "42.1");
     }
     {
-        // Str to num
-        constexpr int argc = 6;
-        char const * argv[argc] = {"ignored", "42", "-4000", "007", "45.67", "azerty"};
+        // Str to num, from string view
+        CHECK(ValueTrait<int>::parse("42", "a") == 42);
+        CHECK(ValueTrait<int>::parse("-4000", "a") == -4000);
+        CHECK(ValueTrait<int>::parse("007", "a") == 7);
+        CHECK(ValueTrait<int>::parse("0xF", "a") == 15);
+        CHECK_THROWS_AS_MESSAGE(
+            ValueTrait<int>::parse("45.67", "a"),
+            Exception,
+            "value 'a' is not a valid integer (int): '45.67'");
+        CHECK_THROWS_AS_MESSAGE(
+            ValueTrait<int>::parse("azerty", "a"),
+            Exception,
+            "value 'a' is not a valid integer (int): 'azerty'");
+        CHECK_THROWS_AS_MESSAGE(
+            ValueTrait<int>::parse("42 ", "a"),
+            Exception,
+            "value 'a' is not a valid integer (int): '42 '");
+
+        CHECK(ValueTrait<long>::parse("42", "a") == 42);
+        CHECK_THROWS_AS_MESSAGE(
+            ValueTrait<long>::parse("45.67", "a"),
+            Exception,
+            "value 'a' is not a valid integer (int): '45.67'");
+
+        CHECK(ValueTrait<float>::parse("42", "a") == float(42));
+
+        CHECK(ValueTrait<double>::parse("42", "a") == double(42));
+        CHECK(ValueTrait<double>::parse("1.02e10", "a") == double(1.02e10));
+
+        CHECK(ValueTrait<long double>::parse("42", "a") == static_cast<long double>(42));
+    }
+    {
+        // Str to num, extraction from Commandline
+        constexpr int argc = 4;
+        char const * argv[argc] = {"ignored", "42", "45.67", "azerty"};
         CommandLine state{argc, argv};
         CHECK(ValueTrait<int>::parse(state, "a") == 42);
-        CHECK(ValueTrait<int>::parse(state, "a") == -4000);
-        CHECK(ValueTrait<int>::parse(state, "a") == 7);
         CHECK_THROWS_AS_MESSAGE(
             ValueTrait<int>::parse(state, "a"),
             Exception,

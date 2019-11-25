@@ -15,7 +15,6 @@
 // TODO compat C++14 ?
 // Optional
 // string_view
-// to_chars / from_chars : use snprintf / strtol + string construction(null termination...)
 #include <optional>
 #include <string_view>
 namespace ropts {
@@ -225,7 +224,6 @@ template <> struct ValueTrait<int> {
     static int parse(CommandLine & state, string_view name);
     static std::size_t write(std::string & buffer, int value);
 };
-
 template <> struct ValueTrait<long> {
     using NameType = CowStr;
     using ValueType = long;
@@ -234,12 +232,26 @@ template <> struct ValueTrait<long> {
     static std::size_t write(std::string & buffer, long value);
 };
 
+template <> struct ValueTrait<float> {
+    using NameType = CowStr;
+    using ValueType = float;
+    static float parse(string_view text, string_view name);
+    static float parse(CommandLine & state, string_view name);
+    static std::size_t write(std::string & buffer, float value);
+};
 template <> struct ValueTrait<double> {
     using NameType = CowStr;
     using ValueType = double;
     static double parse(string_view text, string_view name);
     static double parse(CommandLine & state, string_view name);
     static std::size_t write(std::string & buffer, double value);
+};
+template <> struct ValueTrait<long double> {
+    using NameType = CowStr;
+    using ValueType = long double;
+    static long double parse(string_view text, string_view name);
+    static long double parse(CommandLine & state, string_view name);
+    static std::size_t write(std::string & buffer, long double value);
 };
 
 template <typename... Types> struct ValueTrait<std::tuple<Types...>> {

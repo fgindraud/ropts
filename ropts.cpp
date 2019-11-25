@@ -1,9 +1,19 @@
 #include "ropts.h"
 
-#include <charconv> // from_chars / to_chars (C++17)
-#include <cstdio>   // FILE* based IO
-#include <limits>   // digits10 for write_numeric
-#include <ostream>  // std::ostream IO
+/* Number to str conversions :
+ * C++17 has to_chars/from_chars.
+ * However they are not supported for floats on Linux (yet).
+ *
+ * Parsing: use C strto<T> ; they require a null terminated string (copy) and use errno.
+ * Writing: use snprintf with format specifier.
+ */
+
+#include <cerrno>    // strto<T> error detection
+#include <cinttypes> // strtoimax
+#include <cstdio>    // FILE* based IO
+#include <cstdlib>   // strtoT for floating point
+#include <limits>
+#include <ostream> // std::ostream IO
 #include <string>
 
 namespace ropts {
@@ -46,29 +56,48 @@ void CommandLine::push_front(string_view element) {
  * ValueTrait
  */
 
-// Parse a numeric value using from_chars
+[[noreturn]] static void
+fail_invalid_type_parsing(string_view text, string_view value_name, string_view type_name) {
+    std::string buf;
+    write_text(buf, "value '");
+    write_text(buf, value_name);
+    write_text(buf, "' is not a valid ");
+    write_text(buf, type_name);
+    write_text(buf, ": '");
+    write_text(buf, text);
+    write_text(buf, '\'');
+    throw Exception(std::move(buf));
+}
+
+static std::intmax_t parse_intmax(string_view text, string_view value_name, string_view type_name) {
+    if(!text.empty()) {
+        std::string null_terminated{text.data(), text.size()};
+        char * end_ptr = nullptr;
+        errno = 0;
+        std::intmax_t value = std::strtoimax(null_terminated.data(), &end_ptr, 0);
+        if(end_ptr == null_terminated.data() + null_terminated.size() && errno == 0) {
+            return value;
+        }
+    }
+    fail_invalid_type_parsing(text, value_name, type_name);
+}
+
 template <typename T>
-static T parse_numeric(string_view text, string_view name, string_view type_name) {
-    T value;
-    std::from_chars_result result = std::from_chars(text.begin(), text.end(), value);
-    if(result.ptr == text.end()) {
-        return value;
+static T parse_signed_integer(string_view text, string_view value_name, string_view type_name) {
+    using Limits = std::numeric_limits<T>;
+    static_assert(Limits::is_integer, "implementation bug");
+    static_assert(Limits::is_signed, "implementation bug");
+    std::intmax_t value = parse_intmax(text, value_name, type_name);
+    if(std::intmax_t(Limits::min()) <= value && value <= std::intmax_t(Limits::max())) {
+        return static_cast<T>(value);
     } else {
-        std::string buf;
-        write_text(buf, "value '");
-        write_text(buf, name);
-        write_text(buf, "' is not a valid ");
-        write_text(buf, type_name);
-        write_text(buf, ": '");
-        write_text(buf, text);
-        write_text(buf, '\'');
-        throw Exception(std::move(buf));
+        fail_invalid_type_parsing(text, value_name, type_name);
     }
 }
 
-// Write a numeric value using to_chars
-// estimated_size is an heuristic estimation of written size ; better to overapproximate
-template <typename T> static std::size_t write_numeric(std::string & buffer, T value) {
+// Write a numeric value using snprintf
+template <typename T>
+static std::size_t write_numeric(std::string & buffer, T value, char const * format) {
     std::size_t estimated_size =
         std::numeric_limits<T>::is_integer
             ? std::numeric_limits<T>::digits10 + 2  // Integers : max digits + space for '-'
@@ -76,17 +105,13 @@ template <typename T> static std::size_t write_numeric(std::string & buffer, T v
     std::size_t init_buf_size = buffer.size();
     while(true) {
         // Try writing to the buffer + estimated_size bytes
-        std::size_t temporary_size = init_buf_size + estimated_size;
-        buffer.resize(temporary_size);
-        std::to_chars_result result =
-            std::to_chars(&buffer[init_buf_size], &buffer[temporary_size], value);
-        if(result.ec == std::errc{}) {
-            assert(&buffer[init_buf_size] <= result.ptr);
-            assert(result.ptr <= &buffer[temporary_size]);
+        buffer.resize(init_buf_size + estimated_size);
+        int written = std::snprintf(&buffer[init_buf_size], estimated_size, format, value);
+        if(written >= 0 && std::size_t(written) < estimated_size) {
             // Trim the buffer to what was written (remove unwritten space)
-            std::size_t new_buf_size = result.ptr - buffer.data();
-            buffer.resize(new_buf_size);
-            return new_buf_size - init_buf_size;
+            auto written_size = static_cast<std::size_t>(written);
+            buffer.resize(init_buf_size + written_size);
+            return written_size;
         } else {
             // Try again with bigger space
             estimated_size *= 2;
@@ -95,33 +120,80 @@ template <typename T> static std::size_t write_numeric(std::string & buffer, T v
 }
 
 int ValueTrait<int>::parse(string_view text, string_view name) {
-    return parse_numeric<int>(text, name, "integer (int)");
+    return parse_signed_integer<int>(text, name, "integer (int)");
 }
 int ValueTrait<int>::parse(CommandLine & state, string_view name) {
     return parse(state.next_value_or_fail(name), name);
 }
 std::size_t ValueTrait<int>::write(std::string & buffer, int value) {
-    return write_numeric<int>(buffer, value);
+    return write_numeric(buffer, value, "%i");
 }
 
 long ValueTrait<long>::parse(string_view text, string_view name) {
-    return parse_numeric<long>(text, name, "integer (long)");
+    return parse_signed_integer<long>(text, name, "integer (long)");
 }
 long ValueTrait<long>::parse(CommandLine & state, string_view name) {
     return parse(state.next_value_or_fail(name), name);
 }
 std::size_t ValueTrait<long>::write(std::string & buffer, long value) {
-    return write_numeric<long>(buffer, value);
+    return write_numeric(buffer, value, "%li");
+}
+
+float ValueTrait<float>::parse(string_view text, string_view name) {
+    if(!text.empty()) {
+        std::string null_terminated{text.data(), text.size()};
+        char * end_ptr = nullptr;
+        errno = 0;
+        float value = std::strtof(null_terminated.data(), &end_ptr);
+        if(end_ptr == null_terminated.data() + null_terminated.size() && errno == 0) {
+            return value;
+        }
+    }
+    fail_invalid_type_parsing(text, name, "float");
+}
+float ValueTrait<float>::parse(CommandLine & state, string_view name) {
+    return parse(state.next_value_or_fail(name), name);
+}
+std::size_t ValueTrait<float>::write(std::string & buffer, float value) {
+    return write_numeric(buffer, double(value), "%g");
 }
 
 double ValueTrait<double>::parse(string_view text, string_view name) {
-    return parse_numeric<double>(text, name, "float (double)");
+    if(!text.empty()) {
+        std::string null_terminated{text.data(), text.size()};
+        char * end_ptr = nullptr;
+        errno = 0;
+        double value = std::strtod(null_terminated.data(), &end_ptr);
+        if(end_ptr == null_terminated.data() + null_terminated.size() && errno == 0) {
+            return value;
+        }
+    }
+    fail_invalid_type_parsing(text, name, "double");
 }
 double ValueTrait<double>::parse(CommandLine & state, string_view name) {
     return parse(state.next_value_or_fail(name), name);
 }
 std::size_t ValueTrait<double>::write(std::string & buffer, double value) {
-    return write_numeric<double>(buffer, value);
+    return write_numeric(buffer, value, "%g");
+}
+
+long double ValueTrait<long double>::parse(string_view text, string_view name) {
+    if(!text.empty()) {
+        std::string null_terminated{text.data(), text.size()};
+        char * end_ptr = nullptr;
+        errno = 0;
+        long double value = std::strtold(null_terminated.data(), &end_ptr);
+        if(end_ptr == null_terminated.data() + null_terminated.size() && errno == 0) {
+            return value;
+        }
+    }
+    fail_invalid_type_parsing(text, name, "long double");
+}
+long double ValueTrait<long double>::parse(CommandLine & state, string_view name) {
+    return parse(state.next_value_or_fail(name), name);
+}
+std::size_t ValueTrait<long double>::write(std::string & buffer, long double value) {
+    return write_numeric(buffer, value, "%Lg");
 }
 
 /******************************************************************************
